@@ -104,10 +104,11 @@ def validate_freecad_file(file_path, width, depth, height):
 
         # Verify dimensions with tolerance
         tolerance = 0.1  # mm
-        # assert abs(bbox.XLength + 2*inset - width) <= tolerance, \
-        #     f"Width mismatch: expected {width}, got {bbox.XLength}"
-        # assert abs(bbox.YLength + 2*inset - depth) <= tolerance, \
-        #     f"Depth mismatch: expected {depth}, got {bbox.YLength}"
+        assert abs(bbox.XLength + 2*inset - width) <= tolerance, \
+            f"Width mismatch: expected {width}, got {bbox.XLength}"
+        assert abs(bbox.YLength + 2*inset - depth) <= tolerance, \
+            f"Depth mismatch: expected {depth}, got {bbox.YLength}"
+        logger.error(f"Height mismatch: expected {height}, got {bbox.ZLength}")
         # assert abs(bbox.ZLength - height) <= tolerance, \
         #     f"Height mismatch: expected {height}, got {bbox.ZLength}"
 
@@ -127,7 +128,7 @@ def validate_stl_file(file_path):
 
         # Check file size is reasonable
         file_size = os.path.getsize(file_path)
-#        assert file_size > 1000, f"STL file suspiciously small: {file_size} bytes"
+        assert file_size > 1000, f"STL file suspiciously small: {file_size} bytes"
 
     except Exception as e:
         logger.error(f"Error validating STL file: {e}")
@@ -191,9 +192,7 @@ def test_bin(width, depth, height, description, tmp_path):
         assert temp_stl_path.exists(), f"STL file not found at {temp_stl_path}"
 
         # Validate file contents
-        validate_freecad_file(temp_fcstd_path, width, depth,
-                              5.8 )
-        validate_freecad_file(temp_fcstd_path, width, depth, bin_maker.bottom_thickness + bin_maker.wall_height+bin_maker.lip_height)
+        validate_freecad_file(temp_fcstd_path, width, depth,height )
         validate_stl_file(temp_stl_path)
 
         # Copy files to permanent location

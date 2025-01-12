@@ -235,8 +235,7 @@ class GridfinityCustomBin:
 
             # Combine all parts using multifuse
             all_parts = sections + corners
-            layer_name = "Wall_Layer" if layer_type == "wall" else "Lip_Layer"
-            fused = doc.addObject("Part::MultiFuse", layer_name)
+            fused = doc.addObject("Part::MultiFuse", layer_type+"_ring")
             fused.Shapes = all_parts
 
             return fused
@@ -387,22 +386,13 @@ class GridfinityCustomBin:
             # Create the box at the center
             box = Part.makeBox(box_width, box_depth, self.knob_height,
                                Vector(x_offset + self.corner_diameter/2 - self.bin_inset, y_offset + self.corner_diameter/2 - self.bin_inset, 0))
+            center_obj = doc.addObject("Part::Feature", f"Knob_center_{x_offset}_{y_offset}")
+            center_obj.Shape = box
 
             # Create the swept profile around the perimeter
-            layer = self.create_layer(doc, width, depth, 0, "knob")
+            layer_ring_obj = self.create_layer(doc, width, depth, 0, "knob")
 
-            # Create compound of all shapes
-            shapes = [box]
-            if layer:
-                shapes.append(layer.Shape)
-
-            compound = Part.makeCompound(shapes)
-
-            # Add to document
-            knob_obj = doc.addObject("Part::Feature", f"Knob_{x_offset}_{y_offset}")
-            knob_obj.Shape = compound
-
-            return knob_obj
+            return center_obj, layer_ring_obj
 
         except Exception as e:
             logger.error(f"Error creating knob unit: {e}")
@@ -416,7 +406,7 @@ class GridfinityCustomBin:
             doc = App.newDocument(doc_name)
 
             # Create knob layer first (at the bottom)
-            knob_layer = self.create_knob_layer(doc, width, depth)
+            knob_group_obj = self.create_knob_layer(doc, width, depth)
 
             # Create bottom plate with rounded corners above knobs
             bottom = self.create_bottom_plate(doc, width, depth)
@@ -465,15 +455,18 @@ class GridfinityCustomBin:
 
             # Create knobs for each unit
             for unit in units:
-                knob = self.create_knob_unit(
+                knob_center, knob_ring = self.create_knob_unit(
                     doc,
                     unit['width'],
                     unit['depth'],
                     unit['x_pos'] + self.bin_inset,
                     unit['y_pos'] + self.bin_inset
                 )
-                if knob:
-                    knob_objects.append(knob)
+                if knob_center:
+                    knob_objects.append(knob_center)
+                if knob_ring:
+                    knob_objects.append(knob_ring)
+
 
             # Fuse all knobs together if there are any
             if knob_objects:
