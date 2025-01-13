@@ -148,6 +148,8 @@ def cleanup_logs():
     (84.0, 42.0, 42,"2x1 gridfinity"),
     (30.0, 30.0, 35,  "Custom width"),
     (37.0, 78.0,46,  "Short Drawer Corner"),
+    (126,36,46,"Short Drawer Edge Bin"),
+    (126,37,46,"Short Drawer Edge Bin"),
     (60.0, 60.0, 66, "Custom square"),
     (50.0, 50.0, 25, "Custom square")
 ])
