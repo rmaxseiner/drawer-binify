@@ -6,7 +6,7 @@ from pathlib import Path
 import math
 import logging
 import shutil
-
+from src.core.gridfinity_custom_bin import GridfinityCustomBin
 inset = 0.25
 
 # Set up logging
@@ -109,8 +109,8 @@ def validate_freecad_file(file_path, width, depth, height):
         assert abs(bbox.YLength + 2*inset - depth) <= tolerance, \
             f"Depth mismatch: expected {depth}, got {bbox.YLength}"
         logger.error(f"Height mismatch: expected {height}, got {bbox.ZLength}")
-        # assert abs(bbox.ZLength - height) <= tolerance, \
-        #     f"Height mismatch: expected {height}, got {bbox.ZLength}"
+        assert abs(bbox.ZLength - height) <= tolerance, \
+            f"Height mismatch: expected {height}, got {bbox.ZLength}"
 
         FreeCAD.closeDocument(doc.Name)
     except Exception as e:
@@ -144,18 +144,19 @@ def cleanup_logs():
 
 
 @pytest.mark.parametrize("width,depth,height, description", [
-    (42.0, 42.0, 42, "Standard 1x1 gridfinity")
-    # (84.0, 42.0, 42,"2x1 gridfinity"),
-    # (30.0, 42.0, 35,  "Custom width"),
-    # (42.0, 30.0,76,  "Custom depth"),
-    # (60.0, 60.0, 66, "Custom square"),
+    (42.0, 42.0, 42, "Standard 1x1 gridfinity"),
+    (84.0, 42.0, 42,"2x1 gridfinity"),
+    (30.0, 30.0, 35,  "Custom width"),
+    (37.0, 78.0,46,  "Short Drawer Corner"),
+    (60.0, 60.0, 66, "Custom square"),
+    (50.0, 50.0, 25, "Custom square")
 ])
 def test_bin(width, depth, height, description, tmp_path):
     """Test bin generation with comprehensive validation"""
     logger.info(f"\nTesting bin: {width}x{depth}mm ({description})")
     import FreeCAD
     try:
-        from src.core.gridfinity_custom_bin import GridfinityCustomBin
+
         # Log test parameters
         logger.debug(f"Test parameters:")
         logger.debug(f"Width: {width}mm")
@@ -237,5 +238,82 @@ def test_bin(width, depth, height, description, tmp_path):
         raise
 
 
+def test_minimum_dimensions():
+    """Test creation with minimum allowed dimensions"""
+    bin_maker = GridfinityCustomBin()
+
+    # Exactly at minimum dimensions should work
+    try:
+        doc, fcstd_path, stl_path = bin_maker.create_bin(
+            width=15.0,
+            depth=15.0,
+            height=10.0,
+            output_dir="test_outputs/min_dimensions"
+        )
+    except ValueError as e:
+        pytest.fail(f"Failed to create bin with minimum dimensions: {e}")
+
+
+@pytest.mark.parametrize("width,depth,height,expected_error", [
+    (14.9, 15.0, 10.0, "Invalid bin dimensions:\nWidth (14.9mm) must be at least 15mm"),
+    (15.0, 14.9, 10.0, "Invalid bin dimensions:\nDepth (14.9mm) must be at least 15mm"),
+    (15.0, 15.0, 9.9, "Height (9.9mm) must be at least 10mm"),
+    (251.0, 15.0, 10.0, "Invalid bin dimensions:\nWidth (251.0mm) exceeds print bed width (220mm)"),
+    (15.0, 221.0, 10.0, "Invalid bin dimensions:\nDepth (221.0mm) exceeds print bed depth (220mm)"),
+])
+
+def test_invalid_dimensions(width, depth, height, expected_error):
+    """Test that invalid dimensions raise appropriate errors"""
+    bin_maker = GridfinityCustomBin()
+
+    with pytest.raises(ValueError) as exc_info:
+        bin_maker.create_bin(
+            width=width,
+            depth=depth,
+            height=height,
+            output_dir="test_outputs/invalid_dimensions"
+        )
+
+    assert expected_error in str(exc_info.value)
+
+
+@pytest.mark.parametrize("width,depth,height,description", [
+    (15.0, 15.0, 10.0, "Minimum dimensions"),
+    (220.0, 210.0, 10.0, "Maximum dimensions"),
+    (15.0, 210.0, 10.0, "Min width, max depth"),
+    (220.0, 15.0, 10.0, "Max width, min depth"),
+    (15.0, 15.0, 200.0, "Min width/depth, tall height"),
+])
+def test_boundary_dimensions(width, depth, height, description):
+    """Test creation with boundary dimensions"""
+    bin_maker = GridfinityCustomBin()
+
+    try:
+        doc, fcstd_path, stl_path = bin_maker.create_bin(
+            width=width,
+            depth=depth,
+            height=height,
+            output_dir=f"test_outputs/boundary_{width}x{depth}x{height}"
+        )
+    except ValueError as e:
+        pytest.fail(f"Failed to create bin with boundary dimensions ({description}): {e}")
+
+
+def test_multiple_dimension_errors():
+    """Test that multiple dimension errors are reported together"""
+    bin_maker = GridfinityCustomBin()
+
+    with pytest.raises(ValueError) as exc_info:
+        bin_maker.create_bin(
+            width=14.0,
+            depth=14.0,
+            height=9.0,
+            output_dir="test_outputs/multiple_errors"
+        )
+
+    error_msg = str(exc_info.value)
+    assert "Width (14.0mm) must be at least 15mm" in error_msg
+    assert "Depth (14.0mm) must be at least 15mm" in error_msg
+    assert "Height (9.0mm) must be at least 10mm" in error_msg
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

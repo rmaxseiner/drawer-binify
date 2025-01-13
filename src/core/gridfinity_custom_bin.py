@@ -15,23 +15,86 @@ class GridfinityCustomBin:
         self.bin_inset = 0.25
         self.corner_diameter = 8.0
         self.wall_height = 5.0
-        self.lip_height = 1.5  # Height of the lip section
+        self.lip_height = 4.3  # Height of the lip section
         self.bottom_thickness = 0.8  # Thickness of the bottom plate
+        self.print_bed_width = 220
+        self.print_bed_depth = 220
 
-    def create_straight_section(self, doc, start_point, end_point, height, name,profile, layer_type="wall"):
+    def create_straight_sections(self, doc, width, depth, corner_radius, x_offset, y_offset, z_offset, profile, layer_type="wall"):
+        """Creates straight sections with validations"""
+        created_objects = []
+
+
+        # Define sections
+        sections = [
+            # (start, end, name)
+            ((corner_radius-self.bin_inset + x_offset, y_offset , z_offset),
+             (width - corner_radius - self.bin_inset + x_offset, y_offset, z_offset),
+             "Bottom"),
+            ((width + x_offset-self.bin_inset*2, corner_radius-self.bin_inset + y_offset ,  z_offset),
+             (width + x_offset-self.bin_inset*2, depth - corner_radius-self.bin_inset + y_offset, z_offset),
+             "Right"),
+            ((width - corner_radius - self.bin_inset + x_offset, depth - self.bin_inset*2 + y_offset, z_offset),
+             (corner_radius - self.bin_inset + x_offset, depth - self.bin_inset*2 + y_offset, z_offset),
+             "Top"),
+            ((x_offset, depth - corner_radius - self.bin_inset + y_offset, z_offset),
+             (x_offset, corner_radius - self.bin_inset + y_offset, z_offset),
+             "Left")
+        ]
+
+        for i, (start, end, section_name) in enumerate(sections):
+            try:
+                logger.info(f"Creating {layer_type} straight section '{section_name}':")
+                logger.debug(f"  Start point: {start}")
+                logger.debug(f"  End point: {end}")
+                start_v = Vector(*start)
+                end_v = Vector(*end)
+
+                # Create and validate line
+                line = Part.makeLine(start_v, end_v)
+
+                line_wire = Part.Wire([line])
+
+                # Calculate angle
+                dx = end_v.x - start_v.x
+                dy = end_v.y - start_v.y
+                angle = math.degrees(math.atan2(dy, dx))
+
+                # Transform profile
+                transformed_profile = self.transform_profile(profile, start_v, angle)
+
+                # Create pipe
+                pipe = line_wire.makePipe(transformed_profile)
+
+
+                # Add to document
+                swept_obj = doc.addObject("Part::Feature", f"SweptProfile_{section_name}_{x_offset}_{y_offset}")
+                swept_obj.Shape = pipe
+                created_objects.append(swept_obj)
+
+                logger.debug(f"Created {section_name} section successfully")
+
+            except Part.OCCError as e:
+                logger.error(f"Error creating {section_name} section: {e}")
+                continue
+
+        return created_objects
+
+    def create_straight_section(self, doc, start_point, end_point, height, name, profile, layer_type="wall"):
         """Creates a straight section with specified profile type"""
         try:
             logger.info(f"Creating {layer_type} straight section '{name}':")
             logger.debug(f"  Start point: {start_point}")
             logger.debug(f"  End point: {end_point}")
 
+            # Create line using the provided points directly (they should already include offsets)
             line = Part.makeLine(start_point, end_point)
             dx = end_point.x - start_point.x
             dy = end_point.y - start_point.y
             angle = math.degrees(math.atan2(dy, dx))
             logger.debug(f"  Line angle: {angle} degrees (dx={dx:.2f}, dy={dy:.2f})")
 
-            # Transform the profile
+            # Transform the profile to the start point
             profile_face = self.transform_profile(profile, start_point, angle)
 
             wire = Part.Wire([line])
@@ -55,11 +118,11 @@ class GridfinityCustomBin:
              0, "BottomLeft"),
             ((width - corner_radius + x_offset, corner_radius + y_offset, z_offset),
              270, 0,
-             Vector(width - corner_radius + x_offset, y_offset, z_offset),
+             Vector(width + x_offset - corner_radius, y_offset, z_offset),
              0, "BottomRight"),
             ((width - corner_radius + x_offset, depth - corner_radius + y_offset, z_offset),
              0, 90,
-             Vector(width - corner_radius + x_offset, depth + y_offset, z_offset),
+             Vector(width + x_offset - corner_radius, depth + y_offset, z_offset),
              180, "TopRight"),
             ((corner_radius + x_offset, depth - corner_radius + y_offset, z_offset),
              90, 180,
@@ -94,13 +157,13 @@ class GridfinityCustomBin:
 
         return created_objects
 
-    def create_wall_base_profile(self):
+    def create_wall_base_profile(self, wall_height):
         """Creates the wall base profile at origin, oriented along Y axis"""
         profile_points = [
             Vector(0, 0, 0),
             Vector(0, self.wall_thickness, 0),  # Along Y axis
-            Vector(0, self.wall_thickness, self.wall_height),
-            Vector(0, 0, self.wall_height),
+            Vector(0, self.wall_thickness, wall_height),
+            Vector(0, 0, wall_height),
             Vector(0, 0, 0)
         ]
         return self.create_profile_from_points(profile_points)
@@ -168,49 +231,22 @@ class GridfinityCustomBin:
 
         return transformed
 
-    def create_layer(self, doc, width, depth, z_offset, profile, layer_type="wall"):
+    def create_layer(self, doc, width, depth, z_offset, profile, x_offset, y_offset, layer_type="wall"):
         """Creates complete layer (wall or lip) including straight sections and corners"""
         try:
             # Determine height based on layer type
             height = self.wall_height if layer_type == "wall" else self.lip_height
 
-            # Calculate key positions with z_offset
-            x_start = self.corner_diameter / 2
-            x_end = width - self.corner_diameter / 2
-            y_start = self.corner_diameter / 2
-            y_end = depth - self.corner_diameter / 2
-
-            # Define corner points with z_offset
-            points = {
-                'a': Vector(x_start, self.bin_inset, z_offset),  # Bottom edge start
-                'b': Vector(x_end, self.bin_inset, z_offset),  # Bottom edge end
-                'c': Vector(width - self.bin_inset, y_start, z_offset),  # Right edge start
-                'd': Vector(width - self.bin_inset, y_end, z_offset),  # Right edge end
-                'e': Vector(x_end, depth - self.bin_inset, z_offset),  # Top edge start
-                'f': Vector(x_start, depth - self.bin_inset, z_offset),  # Top edge end
-                'g': Vector(self.bin_inset, y_end, z_offset),  # Left edge start
-                'h': Vector(self.bin_inset, y_start, z_offset)  # Left edge end
-            }
-
-            logger.info(f"Creating {layer_type} layer at z={z_offset}")
-
-            # Create straight sections
-            sections = []
-            sections.append(self.create_straight_section(doc, points['a'], points['b'],
-                                                         height, "Bottom", profile, layer_type))
-            sections.append(self.create_straight_section(doc, points['c'], points['d'],
-                                                         height, "Right", profile, layer_type))
-            sections.append(self.create_straight_section(doc, points['e'], points['f'],
-                                                         height, "Top", profile, layer_type))
-            sections.append(self.create_straight_section(doc, points['g'], points['h'],
-                                                         height, "Left", profile, layer_type))
+            sections = self.create_straight_sections(doc =doc, width= width, depth=depth,
+                                corner_radius=self.corner_diameter/2,
+                                x_offset=self.bin_inset+x_offset,y_offset=self.bin_inset+y_offset, z_offset=z_offset,
+                                profile=profile, layer_type="wall")
 
             # Create corners at z_offset
-            corners = self.create_corners(doc, width - (self.bin_inset) * 2,
-                                          depth - (self.bin_inset) * 2,
-                                          self.corner_diameter / 2 - (self.bin_inset),
-                                          self.bin_inset, self.bin_inset, profile, layer_type,
-                                          z_offset=z_offset)
+            corners = self.create_corners(doc= doc, width=width - (self.bin_inset) * 2, depth=depth - (self.bin_inset) * 2,
+                                          corner_radius=self.corner_diameter / 2 - (self.bin_inset),
+                                          x_offset= self.bin_inset+x_offset, y_offset=self.bin_inset + y_offset, profile=profile,
+                                          layer_type=layer_type, z_offset=z_offset)
 
             # Combine all parts using multifuse
             all_parts = sections + corners
@@ -352,7 +388,7 @@ class GridfinityCustomBin:
         """Creates a single knob unit if dimensions are sufficient"""
         if width < 15 or depth < 15:
             logger.info(f"Unit too small for knob at ({x_offset}, {y_offset})")
-            return None
+            return None, None
 
         try:
             # Create the knob profile
@@ -364,15 +400,12 @@ class GridfinityCustomBin:
 
             # Create the box at the center
             box = Part.makeBox(box_width, box_depth, self.knob_height,
-                               Vector(x_offset + self.corner_diameter/2 - self.bin_inset, y_offset + self.corner_diameter/2 - self.bin_inset, 0))
+                               Vector(x_offset + self.corner_diameter/2 , y_offset + self.corner_diameter/2 , 0))
             center_obj = doc.addObject("Part::Feature", f"Knob_center_{x_offset}_{y_offset}")
             center_obj.Shape = box
 
-
-            # Create base profile
-            profile = self.create_knob_profile()
             # Create the swept profile around the perimeter
-            layer_ring_obj = self.create_layer(doc, width, depth, 0, profile, "knob")
+            layer_ring_obj = self.create_layer(doc=doc, width=width, depth=depth,z_offset=0, x_offset=x_offset, y_offset=y_offset,  profile=profile, layer_type="knob")
 
             return center_obj, layer_ring_obj
 
@@ -380,9 +413,55 @@ class GridfinityCustomBin:
             logger.error(f"Error creating knob unit: {e}")
             return None
 
+    def validate_dimensions(self, width, depth, height):
+        """Validates bin dimensions against minimum and maximum constraints
+
+        Args:
+            width (float): Width of the bin in mm
+            depth (float): Depth of the bin in mm
+            height (float): Height of the bin in mm
+
+        Raises:
+            ValueError: If any dimension is outside allowed range
+        """
+        errors = []
+
+        # Validate minimum dimensions
+        if width < 15:
+            errors.append(f"Width ({width}mm) must be at least 15mm")
+        if depth < 15:
+            errors.append(f"Depth ({depth}mm) must be at least 15mm")
+        if height < 10:
+            errors.append(f"Height ({height}mm) must be at least 10mm")
+
+        # Validate maximum dimensions
+        if hasattr(self, 'print_bed_width') and width > self.print_bed_width:
+            errors.append(f"Width ({width}mm) exceeds print bed width ({self.print_bed_width}mm)")
+        if hasattr(self, 'print_bed_depth') and depth > self.print_bed_depth:
+            errors.append(f"Depth ({depth}mm) exceeds print bed depth ({self.print_bed_depth}mm)")
+
+        # If any errors were found, raise ValueError with all error messages
+        if errors:
+            raise ValueError("Invalid bin dimensions:\n" + "\n".join(errors))
+
     def create_bin(self, width, depth, height, output_dir="generated_files"):
-        """Creates a complete bin with all layers including knobs"""
+        """Creates a complete bin with all layers including knobs
+
+        Args:
+            width (float): Width of the bin in mm
+            depth (float): Depth of the bin in mm
+            height (float): Height of the bin in mm
+            output_dir (str): Directory for output files
+
+        Returns:
+            tuple: (FreeCAD document, FCStd path, STL path)
+
+        Raises:
+            ValueError: If dimensions are invalid
+        """
         try:
+            # Validate dimensions before proceeding
+            self.validate_dimensions(width, depth, height)
             os.makedirs(output_dir, exist_ok=True)
             doc_name = f"GrifinityBin_{width}x{depth}"
             doc = App.newDocument(doc_name)
@@ -399,13 +478,13 @@ class GridfinityCustomBin:
             wall_height = height - self.bottom_thickness - self.lip_height - self.knob_height
             wall_z_offset = self.bottom_thickness + self.knob_height
 
-            profile = self.create_wall_base_profile()
-            wall_layer = self.create_layer(doc, width, depth, wall_z_offset, profile=profile, layer_type="wall")
+            profile = self.create_wall_base_profile(wall_height)
+            wall_layer = self.create_layer(doc=doc, width=width, depth=depth,z_offset=wall_z_offset, x_offset=0, y_offset=0,  profile=profile, layer_type="knob")
 
             # Create lip layer
-            lip_z_offset = wall_z_offset + self.wall_height
+            lip_z_offset = wall_z_offset + wall_height
             profile = self.create_lip_base_profile()
-            lip_layer = self.create_layer(doc, width, depth, lip_z_offset, profile=profile, layer_type="lip")
+            lip_layer = self.create_layer(doc=doc, width=width, depth=depth,z_offset=lip_z_offset, x_offset=0, y_offset=0,  profile=profile, layer_type="lip")
 
             # Save files
             fcstd_path = os.path.join(output_dir, f"{doc_name}.FCStd")
