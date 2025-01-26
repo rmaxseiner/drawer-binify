@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 
-from src.utils.freecad_setup import setup_freecad_path
+from unused.src.utils.freecad_setup import setup_freecad_path
 from gridfinity_generator import GridfinityDrawerSystem
 
 

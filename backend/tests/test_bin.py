@@ -3,10 +3,9 @@ import os
 import sys
 import pytest
 from pathlib import Path
-import math
 import logging
 import shutil
-from src.core.gridfinity_custom_bin import GridfinityCustomBin
+from unused.src.core.gridfinity_custom_bin import GridfinityCustomBin
 inset = 0.25
 
 # Set up logging
@@ -23,7 +22,7 @@ def setup_logging():
     console_handler.setFormatter(formatter)
 
     # Create file handler and set level to DEBUG
-    log_dir = Path("logs")
+    log_dir = Path("../../tests/logs")
     log_dir.mkdir(exist_ok=True)
     file_handler = logging.FileHandler(log_dir / "test_bin.log")
     file_handler.setLevel(logging.DEBUG)
@@ -149,8 +148,13 @@ def cleanup_logs():
     (30.0, 30.0, 35,  "Custom width"),
     (37.0, 78.0,46,  "Short Drawer Corner"),
     (126,36,46,"Short Drawer Edge Bin"),
-    (126,37,46,"Short Drawer Edge Bin"),
+    (126,37,46,"Short Drawer Left x3 Edge Bin"),
+    (37,204, 46, "Short Drawer Left Edge x full bin"),
+    (168, 37, 46, "Short Drawer Top Edge Bin"),
     (60.0, 60.0, 66, "Custom square"),
+    (42, 42, 60, "Sample tall for deep drawer"),
+    (37, 42, 90, "Sample tall for deep drawer"),
+    (37, 36, 90, "Sample tall for deep drawer"),
     (50.0, 50.0, 25, "Custom square")
 ])
 def test_bin(width, depth, height, description, tmp_path):
@@ -250,7 +254,7 @@ def test_minimum_dimensions():
             width=15.0,
             depth=15.0,
             height=10.0,
-            output_dir="test_outputs/min_dimensions"
+            output_dir="../../tests/test_outputs/min_dimensions"
         )
     except ValueError as e:
         pytest.fail(f"Failed to create bin with minimum dimensions: {e}")
@@ -273,7 +277,7 @@ def test_invalid_dimensions(width, depth, height, expected_error):
             width=width,
             depth=depth,
             height=height,
-            output_dir="test_outputs/invalid_dimensions"
+            output_dir="../../tests/test_outputs/invalid_dimensions"
         )
 
     assert expected_error in str(exc_info.value)

@@ -21,7 +21,7 @@ def setup_logging():
     console_handler.setFormatter(formatter)
 
     # Create file handler and set level to DEBUG
-    log_dir = Path("logs")
+    log_dir = Path("../../tests/logs")
     log_dir.mkdir(exist_ok=True)
     file_handler = logging.FileHandler(log_dir / "test_baseplate.log")
     file_handler.setLevel(logging.DEBUG)
@@ -253,7 +253,7 @@ def cleanup_logs():
     (42, 42, "Basic 1x1", 1),
     (42, 64, "1x1.5 non-standard", 1),
     (64, 42, "1.5x1 non-standard", 1),
-    (331, 204, "Short Drawers", 2),
+    (332, 205, "Short Drawers", 2),
     (250, 250, "Large multi-section", 4)  # Will need 2x2 sections
 ])
 def test_baseplate(width, depth, description, expected_sections, tmp_path):
@@ -261,7 +261,7 @@ def test_baseplate(width, depth, description, expected_sections, tmp_path):
     logger.info(f"\nTesting baseplate: {width}x{depth}mm ({description})")
 
     try:
-        from src.core.gridfinity_baseplate import GridfinityBaseplate
+        from unused.src.core.gridfinity_baseplate import GridfinityBaseplate
 
         # Log test parameters
         logger.debug(f"Test parameters:")
