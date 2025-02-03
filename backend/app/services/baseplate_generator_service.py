@@ -1,23 +1,24 @@
 import shutil
 from pathlib import Path
-from typing import Tuple, List
-
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from core.gridfinity_baseplate import GridfinityBaseplate
 from utils.freecad_setup import setup_freecad
 from ..models import Baseplate, GeneratedFile
 import logging
+from core.gridfinity_config import GridfinityConfig
 logger = logging.getLogger(__name__)
 
 class BaseplateService:
-    def __init__(self, db: Session, base_output_dir: Path):
+    def __init__(self, db: Session, base_output_dir: Path = None):
         self.db = db
-        self.base_output_dir = Path(base_output_dir)
-        self.base_output_dir.mkdir(parents=True, exist_ok=True)
+        self.config = GridfinityConfig.from_env()
+        if base_output_dir:
+            self.config.BASE_OUTPUT_DIR = Path(base_output_dir)
+        self.config.BASE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         self.FreeCAD = setup_freecad()
 
-    async def generate_baseplate(self, name: str, width: float, depth: float) -> Tuple[Baseplate, List[GeneratedFile]]:
+    async def generate_baseplate(self, name: str, width: float, depth: float):
         try:
             # Create baseplate record
             baseplate_record = Baseplate(
@@ -28,11 +29,12 @@ class BaseplateService:
             self.db.add(baseplate_record)
             self.db.flush()
 
-            # Setup directories
+            # Setup directories using relative paths
             temp_dir = Path(f"/tmp/baseplate_{baseplate_record.id}")
             temp_dir.mkdir(exist_ok=True)
 
-            permanent_dir = self.base_output_dir / f"baseplate_{baseplate_record.id}"
+            relative_dir = f"baseplate_{baseplate_record.id}"
+            permanent_dir = self.config.BASE_OUTPUT_DIR / relative_dir
             permanent_dir.mkdir(parents=True, exist_ok=True)
 
             # Generate baseplate sections
@@ -43,7 +45,6 @@ class BaseplateService:
 
             generated_files = []
             for section_name, dimensions in sections:
-                logger.debug(f"Processing section: {section_name}")
                 for file_type in ["FCStd", "stl"]:
                     temp_path = temp_dir / f"{section_name}.{file_type}"
                     if not temp_path.exists():
@@ -52,7 +53,9 @@ class BaseplateService:
                         logger.error(f"Expected file not found: {temp_path}")
                         raise HTTPException(status_code=500, detail=error_msg)
 
+                    relative_path = f"{relative_dir}/{section_name}.{file_type}"
                     permanent_path = permanent_dir / f"{section_name}.{file_type}"
+
                     try:
                         shutil.copy2(temp_path, permanent_path)
                         logger.debug(f"Copied {file_type} file to: {permanent_path}")
@@ -63,7 +66,7 @@ class BaseplateService:
 
                     file_record = GeneratedFile(
                         file_type=file_type,
-                        file_path=str(permanent_path),
+                        file_path=relative_path,  # Store relative path
                         baseplate_id=baseplate_record.id
                     )
                     self.db.add(file_record)

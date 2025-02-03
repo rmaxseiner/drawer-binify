@@ -17,6 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.services.bin_generation_service import BinGenerationService
 from .services import BaseplateService
+from fastapi import Request
+from fastapi.staticfiles import StaticFiles
 
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
@@ -32,6 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"]
 )
+app.mount("/files", StaticFiles(directory="/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output"), name="files")
 
 
 class BinGenerateRequest(BaseModel):
@@ -224,9 +227,19 @@ async def generate_baseplate_endpoint(
 
 
 @app.get("/models/", response_model=List[schemas.ModelResponse])
-async def get_models_endpoint(db: Session = Depends(get_db)):
+async def get_models_endpoint(request: Request, db: Session = Depends(get_db)):
     model_service = ModelService(db)
-    return model_service.retrieve_models()
+    models = model_service.retrieve_models()
+
+    # Get base URL from request
+    base_url = str(request.base_url).rstrip('/')
+
+    # Convert relative paths to full URLs
+    for model in models:
+        if model.file_path:
+            model.file_path = f"{base_url}/files/{model.file_path}"
+
+    return models
 
 @app.delete("/models/{model_id}")
 async def delete_model_endpoint(

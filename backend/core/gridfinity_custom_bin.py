@@ -4,21 +4,13 @@ import Part
 from FreeCAD import Vector
 import math
 import logging
-
+from core.gridfinity_config import GridfinityConfig
 logger = logging.getLogger(__name__)
 
 
 class GridfinityCustomBin:
-    def __init__(self):
-        self.knob_height = 4.75
-        self.wall_thickness = 1.2
-        self.bin_inset = 0.25
-        self.corner_diameter = 8.0
-        self.wall_height = 5.0
-        self.lip_height = 4.3  # Height of the lip section
-        self.bottom_thickness = 0.8  # Thickness of the bottom plate
-        self.print_bed_width = 220
-        self.print_bed_depth = 220
+    def __init__(self, config: GridfinityConfig = None):
+        self.config = config or GridfinityConfig()
 
     def create_straight_sections(self, doc, width, depth, corner_radius, x_offset, y_offset, z_offset, profile, layer_type="wall"):
         """Creates straight sections with validations"""
@@ -28,17 +20,17 @@ class GridfinityCustomBin:
         # Define sections
         sections = [
             # (start, end, name)
-            ((corner_radius-self.bin_inset + x_offset, y_offset , z_offset),
-             (width - corner_radius - self.bin_inset + x_offset, y_offset, z_offset),
+            ((corner_radius-self.config.BIN_INSET + x_offset, y_offset , z_offset),
+             (width - corner_radius - self.config.BIN_INSET + x_offset, y_offset, z_offset),
              "Bottom"),
-            ((width + x_offset-self.bin_inset*2, corner_radius-self.bin_inset + y_offset ,  z_offset),
-             (width + x_offset-self.bin_inset*2, depth - corner_radius-self.bin_inset + y_offset, z_offset),
+            ((width + x_offset-self.config.BIN_INSET*2, corner_radius-self.config.BIN_INSET + y_offset ,  z_offset),
+             (width + x_offset-self.config.BIN_INSET*2, depth - corner_radius-self.config.BIN_INSET + y_offset, z_offset),
              "Right"),
-            ((width - corner_radius - self.bin_inset + x_offset, depth - self.bin_inset*2 + y_offset, z_offset),
-             (corner_radius - self.bin_inset + x_offset, depth - self.bin_inset*2 + y_offset, z_offset),
+            ((width - corner_radius - self.config.BIN_INSET + x_offset, depth - self.config.BIN_INSET*2 + y_offset, z_offset),
+             (corner_radius - self.config.BIN_INSET + x_offset, depth - self.config.BIN_INSET*2 + y_offset, z_offset),
              "Top"),
-            ((x_offset, depth - corner_radius - self.bin_inset + y_offset, z_offset),
-             (x_offset, corner_radius - self.bin_inset + y_offset, z_offset),
+            ((x_offset, depth - corner_radius - self.config.BIN_INSET + y_offset, z_offset),
+             (x_offset, corner_radius - self.config.BIN_INSET + y_offset, z_offset),
              "Left")
         ]
 
@@ -161,8 +153,8 @@ class GridfinityCustomBin:
         """Creates the wall base profile at origin, oriented along Y axis"""
         profile_points = [
             Vector(0, 0, 0),
-            Vector(0, self.wall_thickness, 0),  # Along Y axis
-            Vector(0, self.wall_thickness, wall_height),
+            Vector(0, self.config.WALL_THICKNESS, 0),  # Along Y axis
+            Vector(0, self.config.WALL_THICKNESS, wall_height),
             Vector(0, 0, wall_height),
             Vector(0, 0, 0)
         ]
@@ -235,17 +227,17 @@ class GridfinityCustomBin:
         """Creates complete layer (wall or lip) including straight sections and corners"""
         try:
             # Determine height based on layer type
-            height = self.wall_height if layer_type == "wall" else self.lip_height
+            height = self.config.WALL_HEIGHT if layer_type == "wall" else self.config.LIP_HEIGHT
 
             sections = self.create_straight_sections(doc =doc, width= width, depth=depth,
-                                corner_radius=self.corner_diameter/2,
-                                x_offset=self.bin_inset+x_offset,y_offset=self.bin_inset+y_offset, z_offset=z_offset,
+                                corner_radius=self.config.CORNER_DIAMETER/2,
+                                x_offset=self.config.BIN_INSET+x_offset,y_offset=self.config.BIN_INSET+y_offset, z_offset=z_offset,
                                 profile=profile, layer_type="wall")
 
             # Create corners at z_offset
-            corners = self.create_corners(doc= doc, width=width - (self.bin_inset) * 2, depth=depth - (self.bin_inset) * 2,
-                                          corner_radius=self.corner_diameter / 2 - (self.bin_inset),
-                                          x_offset= self.bin_inset+x_offset, y_offset=self.bin_inset + y_offset, profile=profile,
+            corners = self.create_corners(doc= doc, width=width - self.config.BIN_INSET * 2, depth=depth - self.config.BIN_INSET * 2,
+                                          corner_radius=self.config.CORNER_DIAMETER / 2 - self.config.BIN_INSET,
+                                          x_offset= self.config.BIN_INSET+x_offset, y_offset=self.config.BIN_INSET + y_offset, profile=profile,
                                           layer_type=layer_type, z_offset=z_offset)
 
             # Combine all parts using multifuse
@@ -264,13 +256,13 @@ class GridfinityCustomBin:
         """Creates the bottom plate with rounded corners using explicit geometry construction"""
         try:
             # Calculate dimensions for the bottom plate
-            length = width - (2 * self.bin_inset)
-            plate_width = depth - (2 * self.bin_inset)
-            corner_radius = self.corner_diameter / 2 - self.bin_inset
+            length = width - (2 * self.config.BIN_INSET)
+            plate_width = depth - (2 * self.config.BIN_INSET)
+            corner_radius = self.config.CORNER_DIAMETER / 2 - self.config.BIN_INSET
 
             # Calculate key points for the rounded rectangle
-            x_start = self.bin_inset
-            y_start = self.bin_inset
+            x_start = self.config.BIN_INSET
+            y_start = self.config.BIN_INSET
             x_end = x_start + length
             y_end = y_start + plate_width
 
@@ -318,7 +310,7 @@ class GridfinityCustomBin:
             face = Part.Face(wire)
 
             # Extrude the face to create the bottom plate
-            bottom_plate = face.extrude(Vector(0, 0, self.bottom_thickness))
+            bottom_plate = face.extrude(Vector(0, 0, self.config.BOTTOM_THICKNESS))
 
             # Add to document
             bottom_obj = doc.addObject("Part::Feature", "Bottom_Plate")
@@ -343,9 +335,15 @@ class GridfinityCustomBin:
         logger.info("Creating knob profile")
         return self.create_profile_from_points(profile_points)
 
-    def grid_divider(self, width, depth, grid_size=42):
+    def grid_divider(self, width, depth, grid_size=None):
         """Divides the bin bottom into standard and non-standard units"""
         units = []
+        grid_size = grid_size or self.config.GRID_SIZE
+
+        # Validate grid size
+        is_valid, error_msg = self.config.is_valid_grid_size(grid_size)
+        if not is_valid:
+            raise ValueError(f"Invalid grid size: {error_msg}")
 
         # Calculate how many complete standard grids fit
         standard_squares_x = int(width / grid_size)
@@ -386,7 +384,7 @@ class GridfinityCustomBin:
 
     def create_knob_unit(self, doc, width, depth, x_offset, y_offset):
         """Creates a single knob unit if dimensions are sufficient"""
-        if width < 15 or depth < 15:
+        if width < self.config.MIN_WIDTH or depth < self.config.MIN_DEPTH:
             logger.info(f"Unit too small for knob at ({x_offset}, {y_offset})")
             return None, None
 
@@ -395,12 +393,12 @@ class GridfinityCustomBin:
             profile = self.create_knob_profile()
 
             # Calculate dimensions for the central box
-            box_width = width - self.corner_diameter # Subtract corner diameter
-            box_depth = depth - self.corner_diameter
+            box_width = width - self.config.CORNER_DIAMETER # Subtract corner diameter
+            box_depth = depth - self.config.CORNER_DIAMETER
 
             # Create the box at the center
-            box = Part.makeBox(box_width, box_depth, self.knob_height,
-                               Vector(x_offset + self.corner_diameter/2 , y_offset + self.corner_diameter/2 , 0))
+            box = Part.makeBox(box_width, box_depth, self.config.KNOB_HEIGHT,
+                               Vector(x_offset + self.config.CORNER_DIAMETER/2 , y_offset + self.config.CORNER_DIAMETER/2 , 0))
             center_obj = doc.addObject("Part::Feature", f"Knob_center_{x_offset}_{y_offset}")
             center_obj.Shape = box
 
@@ -427,17 +425,17 @@ class GridfinityCustomBin:
         errors = []
 
         # Validate minimum dimensions
-        if width < 15:
-            errors.append(f"Width ({width}mm) must be at least 15mm")
-        if depth < 15:
-            errors.append(f"Depth ({depth}mm) must be at least 15mm")
-        if height < 10:
-            errors.append(f"Height ({height}mm) must be at least 10mm")
+        if width < self.config.MIN_WIDTH:
+            errors.append(f"Width ({width}mm) must be at least {self.config.MIN_WIDTH}mm")
+        if depth < self.config.MIN_DEPTH:
+            errors.append(f"Depth ({depth}mm) must be at least {self.config.MIN_DEPTH}mm")
+        if height < self.config.MIN_HEIGHT:
+            errors.append(f"Height ({height}mm) must be at least {self.config.MIN_HEIGHT}mm")
 
         # Validate maximum dimensions
-        if hasattr(self, 'print_bed_width') and width > self.print_bed_width:
+        if hasattr(self, 'print_bed_width') and width > self.config.PRINT_BED_WIDTH:
             errors.append(f"Width ({width}mm) exceeds print bed width ({self.print_bed_width}mm)")
-        if hasattr(self, 'print_bed_depth') and depth > self.print_bed_depth:
+        if hasattr(self, 'print_bed_depth') and depth > self.config.PRINT_BED_DEPTH:
             errors.append(f"Depth ({depth}mm) exceeds print bed depth ({self.print_bed_depth}mm)")
 
         # If any errors were found, raise ValueError with all error messages
@@ -472,11 +470,11 @@ class GridfinityCustomBin:
             # Create bottom plate with rounded corners above knobs
             bottom = self.create_bottom_plate(doc, width, depth)
             if bottom and hasattr(bottom, "Shape"):
-                bottom.Placement.Base.z = self.knob_height
+                bottom.Placement.Base.z = self.config.KNOB_HEIGHT
 
             # Calculate wall height and create wall layer
-            wall_height = height - self.bottom_thickness - self.lip_height - self.knob_height
-            wall_z_offset = self.bottom_thickness + self.knob_height
+            wall_height = height - self.config.BOTTOM_THICKNESS - self.config.LIP_HEIGHT - self.config.KNOB_HEIGHT
+            wall_z_offset = self.config.BOTTOM_THICKNESS + self.config.KNOB_HEIGHT
 
             profile = self.create_wall_base_profile(wall_height)
             wall_layer = self.create_layer(doc=doc, width=width, depth=depth,z_offset=wall_z_offset, x_offset=0, y_offset=0,  profile=profile, layer_type="knob")
@@ -496,7 +494,7 @@ class GridfinityCustomBin:
             mesh = Mesh.Mesh()
             for obj in doc.Objects:
                 if hasattr(obj, 'Shape'):
-                    vertices, facets = obj.Shape.tessellate(0.05)
+                    vertices, facets = obj.Shape.tessellate(self.config.STL_TESSELLATION_TOLERANCE)
                     for f in facets:
                         mesh.addFacet(vertices[f[0]], vertices[f[1]], vertices[f[2]])
             mesh.write(stl_path)
@@ -512,8 +510,8 @@ class GridfinityCustomBin:
         """Creates the complete knob layer with all units"""
         try:
             # Get all units based on the grid
-            units = self.grid_divider(width - (2 * self.bin_inset),
-                                      depth - (2 * self.bin_inset))
+            units = self.grid_divider(width - (2 * self.config.BIN_INSET),
+                                      depth - (2 * self.config.BIN_INSET))
 
             knob_objects = []
 
@@ -523,8 +521,8 @@ class GridfinityCustomBin:
                     doc,
                     unit['width'],
                     unit['depth'],
-                    unit['x_pos'] + self.bin_inset,
-                    unit['y_pos'] + self.bin_inset
+                    unit['x_pos'] + self.config.BIN_INSET,
+                    unit['y_pos'] + self.config.BIN_INSET
                 )
                 if knob_center:
                     knob_objects.append(knob_center)

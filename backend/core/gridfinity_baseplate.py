@@ -8,7 +8,7 @@ import Part
 from FreeCAD import Vector
 import math
 import logging
-
+from core.gridfinity_config import GridfinityConfig
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -35,21 +35,16 @@ class PrintableObject:
 
 
 class GridfinityBaseplate:
-    def __init__(self, drawer_width, drawer_depth, print_bed_width=180, print_bed_depth=180):
+    def __init__(self, drawer_width, drawer_depth, config: GridfinityConfig = None):
+        self.config = config or GridfinityConfig()
         self.drawer_width = drawer_width
         self.drawer_depth = drawer_depth
-        self.print_bed_width = print_bed_width
-        self.print_bed_depth = print_bed_depth
-        self.grid_size = 42.0
-        self.height = 5.0
-        self.tolerance = 0.5
-        self.corner_radius = 4.0
 
-        self.num_squares_x = math.ceil((drawer_width - 2 * self.tolerance) / self.grid_size)
-        self.num_squares_y = math.ceil((drawer_depth - 2 * self.tolerance) / self.grid_size)
+        self.num_squares_x = math.ceil((drawer_width - 2 * self.config.TOLERANCE) / self.config.GRID_SIZE)
+        self.num_squares_y = math.ceil((drawer_depth - 2 * self.config.TOLERANCE) / self.config.GRID_SIZE)
 
-        self.total_width = self.num_squares_x * self.grid_size
-        self.total_depth = self.num_squares_y * self.grid_size
+        self.total_width = self.num_squares_x * self.config.GRID_SIZE
+        self.total_depth = self.num_squares_y * self.config.GRID_SIZE
 
 
     def grid_divider(self):
@@ -61,33 +56,33 @@ class GridfinityBaseplate:
         total_depth = self.drawer_depth
 
         # Calculate how many complete standard grids fit
-        standard_squares_x = int(total_width / self.grid_size)
-        standard_squares_y = int(total_depth / self.grid_size)
+        standard_squares_x = int(total_width / self.config.GRID_SIZE)
+        standard_squares_y = int(total_depth / self.config.GRID_SIZE)
 
         # Calculate the actual remaining space (could be negative)
-        remaining_width = total_width - (standard_squares_x * self.grid_size)
-        remaining_depth = total_depth - (standard_squares_y * self.grid_size)
+        remaining_width = total_width - (standard_squares_x * self.config.GRID_SIZE)
+        remaining_depth = total_depth - (standard_squares_y * self.config.GRID_SIZE)
 
         # For each grid position
         for y in range(self.num_squares_y):
             for x in range(self.num_squares_x):
-                x_pos = x * self.grid_size
-                y_pos = y * self.grid_size
+                x_pos = x * self.config.GRID_SIZE
+                y_pos = y * self.config.GRID_SIZE
 
                 # Determine width for this unit
                 if x < standard_squares_x:
-                    width = self.grid_size  # Standard width
+                    width = self.config.GRID_SIZE  # Standard width
                 else:
-                    width = remaining_width if remaining_width > 0 else self.grid_size
+                    width = remaining_width if remaining_width > 0 else self.config.GRID_SIZE
 
                 # Determine depth for this unit
                 if y < standard_squares_y:
-                    depth = self.grid_size  # Standard depth
+                    depth = self.config.GRID_SIZE  # Standard depth
                 else:
-                    depth = remaining_depth if remaining_depth > 0 else self.grid_size
+                    depth = remaining_depth if remaining_depth > 0 else self.config.GRID_SIZE
 
                 # Only add unit if dimensions are sufficient
-                is_standard = (width == self.grid_size and depth == self.grid_size)
+                is_standard = (width == self.config.GRID_SIZE and depth == self.config.GRID_SIZE)
                 units.append(Unit(width, depth, x_pos, y_pos, is_standard))
 
         return units
@@ -111,8 +106,8 @@ class GridfinityBaseplate:
             y_count = 0
             current_y_units = []
             for y in range(self.num_squares_y):
-                y_row = [u for u in remaining_units if u.y_offset == y_printable_object_offset + (y * self.grid_size)]
-                if not y_row or (y + 1) * self.grid_size > self.print_bed_depth:
+                y_row = [u for u in remaining_units if u.y_offset == y_printable_object_offset + (y * self.config.GRID_SIZE)]
+                if not y_row or (y + 1) * self.config.GRID_SIZE > self.config.PRINT_BED_DEPTH:
                     break
                 current_y_units.extend(y_row)
                 y_count += 1
@@ -132,12 +127,12 @@ class GridfinityBaseplate:
                     x_col = []
                     for y in range(y_count):
                         unit = next((u for u in current_y_units
-                                     if u.x_offset == x_printable_object_offset + (x * self.grid_size)
-                                     and u.y_offset == y_printable_object_offset + (y * self.grid_size)), None)
+                                     if u.x_offset == x_printable_object_offset + (x * self.config.GRID_SIZE)
+                                     and u.y_offset == y_printable_object_offset + (y * self.config.GRID_SIZE)), None)
                         if unit:
                             x_col.append(unit)
 
-                    if not x_col or (x + 1) * self.grid_size > self.print_bed_width:
+                    if not x_col or (x + 1) * self.config.GRID_SIZE > self.config.PRINT_BED_WIDTH:
                         break
                     printable_section_units.extend(x_col)
                     x_count += 1
@@ -169,11 +164,11 @@ class GridfinityBaseplate:
                         if unit in current_y_units:
                             current_y_units.remove(unit)
 
-                    x_printable_object_offset += x_count * self.grid_size
+                    x_printable_object_offset += x_count * self.config.GRID_SIZE
                 else:
                     break
 
-            y_printable_object_offset += y_count * self.grid_size
+            y_printable_object_offset += y_count * self.config.GRID_SIZE
 
         return printable_objects
 
@@ -212,7 +207,7 @@ class GridfinityBaseplate:
 
             for unit in printable_object.units:
                 # Pass doc reference instead of doc_name
-                objects = self.create_unit(unit.width, unit.depth, self.corner_radius,
+                objects = self.create_unit(unit.width, unit.depth, self.config.CORNER_RADIUS,
                                            unit.x_offset, unit.y_offset, doc)
 
                 # Validate each created object
@@ -240,7 +235,7 @@ class GridfinityBaseplate:
             final_dimensions = {
                 'width': object_bounds['max_x'] - object_bounds['min_x'],
                 'depth': object_bounds['max_y'] - object_bounds['min_y'],
-                'height': 5.0,  # Standard height
+                'height': self.config.BASE_HEIGHT,
                 'position': (object_bounds['min_x'], object_bounds['min_y'])
             }
 
@@ -526,8 +521,8 @@ class GridfinityBaseplate:
         Creates a simple rectangular block and translates it
         """
         try:
-            # Create a box with width x depth x 5mm height
-            box = Part.makeBox(width, depth, 5.0)
+            # Create a box with width x depth x BASE_HEIGHT
+            box = Part.makeBox(width, depth, self.config.BASE_HEIGHT)
 
             # Create translation
             translation = FreeCAD.Matrix()
@@ -537,7 +532,7 @@ class GridfinityBaseplate:
             # Add to document with unique name including position
             block_obj = doc.addObject("Part::Feature", f"SimpleBlock_{x_offset}_{y_offset}")
             block_obj.Shape = box
-            print(f"Created simple block {width}x{depth}x5mm at position ({x_offset}, {y_offset})")
+            print(f"Created simple block {width}x{depth}x{self.config.BASE_HEIGHT}mm at position ({x_offset}, {y_offset})")
             return [block_obj]
 
         except Part.OCCError as e:
@@ -608,7 +603,7 @@ class GridfinityBaseplate:
         logger.debug(f"Creating unit: {width}x{depth} at ({x_offset},{y_offset})")
 
         try:
-            if width < 15 or depth < 15:
+            if width < self.config.MIN_WIDTH or depth < self.config.MIN_DEPTH:
                 shapes = self.create_block(doc, width, depth, x_offset, y_offset)
             else:
                 # Create sections
@@ -663,7 +658,7 @@ class GridfinityBaseplate:
         width_error = abs(actual_width - unit.width)
         depth_error = abs(actual_depth - unit.depth)
 
-        if width_error > 0.1 or depth_error > 0.1:
+        if width_error > self.config.DIMENSION_TOLERANCE or depth_error > self.config.DIMENSION_TOLERANCE:
             raise ValueError(f"Unit dimensions mismatch - Expected: {unit.width}x{unit.depth}, "
                             f"Got: {actual_width:.2f}x{actual_depth:.2f}")
 
