@@ -2,14 +2,63 @@
 
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import STLViewer from '@/components/viewers/STLViewer';
 import { useSearchParams } from 'next/navigation';
+import { MousePointer, Move, RotateCcw, ZoomIn } from 'lucide-react';
+
+const ViewerInstructions = () => (
+  <div className="mb-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <Card className="bg-secondary">
+      <CardContent className="p-4 flex items-center space-x-4">
+        <MousePointer className="h-6 w-6" />
+        <div>
+          <p className="font-medium">Rotate</p>
+          <p className="text-sm text-muted-foreground">Left click + drag</p>
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card className="bg-secondary">
+      <CardContent className="p-4 flex items-center space-x-4">
+        <Move className="h-6 w-6" />
+        <div>
+          <p className="font-medium">Pan</p>
+          <p className="text-sm text-muted-foreground">Right click + drag</p>
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card className="bg-secondary">
+      <CardContent className="p-4 flex items-center space-x-4">
+        <ZoomIn className="h-6 w-6" />
+        <div>
+          <p className="font-medium">Zoom</p>
+          <p className="text-sm text-muted-foreground">Mouse wheel or pinch</p>
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card className="bg-secondary">
+      <CardContent className="p-4 flex items-center space-x-4">
+        <RotateCcw className="h-6 w-6" />
+        <div>
+          <p className="font-medium">Reset View</p>
+          <p className="text-sm text-muted-foreground">Double click</p>
+        </div>
+      </CardContent>
+    </Card>
+  </div>
+);
 
 export default function StlViewPage() {
   const searchParams = useSearchParams();
   const modelUrl = searchParams.get('url');
 
+  console.log('STL View Page - URL param:', modelUrl);
+
   if (!modelUrl) {
+    console.log('No model URL provided');
     return (
       <div className="p-8">
         <Card>
@@ -17,7 +66,9 @@ export default function StlViewPage() {
             <CardTitle>Error</CardTitle>
           </CardHeader>
           <CardContent>
-            <p>No model URL provided</p>
+            <Alert variant="destructive">
+              <AlertDescription>No model URL provided</AlertDescription>
+            </Alert>
           </CardContent>
         </Card>
       </div>
@@ -25,14 +76,17 @@ export default function StlViewPage() {
   }
 
   return (
-    <div className="p-8">
+    <div className="p-8 max-w-7xl mx-auto">
       <Card>
         <CardHeader>
           <CardTitle>Model Viewer</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="w-full h-[600px]">
-            <STLViewer url={modelUrl} />
+          <ViewerInstructions />
+          <div className="border rounded-lg overflow-hidden">
+            <div className="h-[600px]">
+              <STLViewer url={modelUrl} />
+            </div>
           </div>
         </CardContent>
       </Card>

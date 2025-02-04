@@ -10,6 +10,8 @@ import { generateBin, generateBaseplate, getModels, deleteModel, type Model } fr
 import {ArrowLeft} from "lucide-react";
 import {useRouter} from "next/navigation";
 
+
+
 export function GenerateForm() {
   const [dimensions, setDimensions] = useState({
     width: '',
@@ -126,7 +128,7 @@ export function ModelsList() {
   const [models, setModels] = useState<Model[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
+  const router = useRouter();
   const fetchModels = async () => {
     try {
       setLoading(true);
@@ -156,8 +158,11 @@ export function ModelsList() {
   };
 
   const handleView = (filePath: string) => {
-    // Open file in new window/tab
-    window.open(filePath, '_blank');
+    console.log('View button clicked for file:', filePath);
+    const encodedUrl = encodeURIComponent(filePath);
+    const viewerUrl = `/stl-view?url=${encodedUrl}`;
+    console.log('Navigating to:', viewerUrl);
+    router.push(viewerUrl);
   };
 
   if (loading) return <div className="text-center p-4">Loading...</div>;

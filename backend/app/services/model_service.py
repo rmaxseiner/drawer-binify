@@ -7,6 +7,7 @@ from ..utils import StorageManager, storage
 class ModelService:
     def __init__(self, db: Session):
         self.db = db
+        self.storage = StorageManager()  # Initialize storage manager
 
     def retrieve_models(self) -> List[schemas.ModelResponse]:
         bins = self.db.query(models.Bin).all()
@@ -46,7 +47,7 @@ class ModelService:
         # Try to find and delete bin
         bin = self.db.query(models.Bin).filter(models.Bin.id == model_id).first()
         if bin:
-            storage.delete_model_files("bins", bin.id)
+            self.storage.delete_model_files("bins", bin.id)  # Use self.storage instead of storage
             self.db.delete(bin)
             self.db.commit()
             return True
@@ -54,7 +55,7 @@ class ModelService:
         # Try to find and delete baseplate
         baseplate = self.db.query(models.Baseplate).filter(models.Baseplate.id == model_id).first()
         if baseplate:
-            storage.delete_model_files("baseplates", baseplate.id)
+            self.storage.delete_model_files("baseplates", baseplate.id)  # Use self.storage instead of storage
             self.db.delete(baseplate)
             self.db.commit()
             return True
