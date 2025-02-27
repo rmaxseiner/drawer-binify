@@ -66,6 +66,43 @@ export async function deleteModel(modelId: string) {
   return response.json();
 }
 
+export interface PlacedBin {
+  id: string;
+  width: number;
+  depth: number;
+  x: number;
+  y: number;
+  unitX: number;
+  unitY: number;
+  unitWidth: number;
+  unitDepth: number;
+}
+
+export interface GenerateDrawerModelsRequest {
+  name: string;
+  width: number;
+  depth: number;
+  height: number;
+  bins: PlacedBin[];
+}
+
+export async function generateDrawerModels(data: GenerateDrawerModelsRequest) {
+  const response = await fetchWithAuth('/drawers/generate-models/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Failed to generate drawer models: ${text}`);
+  }
+  
+  return response.json();
+}
+
 export async function calculateDrawerGrid(dimensions: DrawerDimensions): Promise<DrawerGridResponse> {
   try {
     const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';

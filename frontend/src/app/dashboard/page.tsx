@@ -42,7 +42,7 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent className="space-y-4">
             <Button
-              onClick={() => router.push('/drawer')}
+              onClick={() => router.push('/create-drawer')}
               className="w-full"
             >
               Create New Drawer

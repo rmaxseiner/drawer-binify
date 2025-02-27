@@ -15,7 +15,7 @@ class ProjectDocumentationGenerator:
             'node_modules', 'output', 'generated_files', '.gitignore',
             '.DS_Store', 'Thumbs.db', '*.pyc', '*.pyo', '*.pyd',
             '*.so', '*.stl', '*.FCStd', '*.FCStd1', 'test_outputs',
-            'tests', 'unused', 'docs', 'package-lock.json', '*.svg',
+            'unused', 'docs', 'package-lock.json', '*.svg',
             'file_reference.json'
         }
 

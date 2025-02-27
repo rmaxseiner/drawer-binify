@@ -48,7 +48,7 @@ class GridfinityBaseplate:
 
 
     def grid_divider(self):
-        """Divides the drawer into standard and non-standard units"""
+        """Divides the drawer into standard and non-standard units, with non-standard at the top"""
         units = []
 
         # Full width and depth of the space to be divided
@@ -63,23 +63,39 @@ class GridfinityBaseplate:
         remaining_width = total_width - (standard_squares_x * self.config.GRID_SIZE)
         remaining_depth = total_depth - (standard_squares_y * self.config.GRID_SIZE)
 
+        # Place non-standard depth units at the top (smaller y values)
+        has_non_standard_depth = remaining_depth > 0 and remaining_depth < self.config.GRID_SIZE
+
         # For each grid position
         for y in range(self.num_squares_y):
             for x in range(self.num_squares_x):
                 x_pos = x * self.config.GRID_SIZE
-                y_pos = y * self.config.GRID_SIZE
+                
+                # If we have non-standard depths, place them at the top by adjusting y_pos
+                if has_non_standard_depth:
+                    # First row (y=0) gets the non-standard depth
+                    if y == 0:
+                        y_pos = 0
+                        depth = remaining_depth if remaining_depth > 0 else self.config.GRID_SIZE
+                    else:
+                        # Shift standard-sized units down to make room for the non-standard unit at the top
+                        y_pos = remaining_depth + (y - 1) * self.config.GRID_SIZE
+                        depth = self.config.GRID_SIZE
+                else:
+                    # Standard y positioning if no non-standard depths
+                    y_pos = y * self.config.GRID_SIZE
+                    
+                    # Determine depth for this unit (standard case)
+                    if y < standard_squares_y:
+                        depth = self.config.GRID_SIZE  # Standard depth
+                    else:
+                        depth = remaining_depth if remaining_depth > 0 else self.config.GRID_SIZE
 
                 # Determine width for this unit
                 if x < standard_squares_x:
                     width = self.config.GRID_SIZE  # Standard width
                 else:
                     width = remaining_width if remaining_width > 0 else self.config.GRID_SIZE
-
-                # Determine depth for this unit
-                if y < standard_squares_y:
-                    depth = self.config.GRID_SIZE  # Standard depth
-                else:
-                    depth = remaining_depth if remaining_depth > 0 else self.config.GRID_SIZE
 
                 # Only add unit if dimensions are sufficient
                 is_standard = (width == self.config.GRID_SIZE and depth == self.config.GRID_SIZE)

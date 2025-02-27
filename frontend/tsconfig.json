@@ -20,7 +20,7 @@
     ],
     "paths": {
       "@/*": ["./src/*"],
-      "three/examples/jsm/*": ["./node_modules/three/examples/jsm/*"]
+      "three/examples/jsm/*": ["./node_modules/@types/three/examples/jsm/*"]
     }
   },
   "include": [

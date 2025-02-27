@@ -5,6 +5,10 @@ import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 
+interface STLViewerProps {
+  url: string;
+}
+
 const STLViewer = ({ url }: STLViewerProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -14,40 +18,32 @@ const STLViewer = ({ url }: STLViewerProps) => {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
+useEffect(() => {
+  const container = containerRef.current;
+  if (!container) return;
 
-    // Clear any existing content
-    while (containerRef.current.firstChild) {
-      containerRef.current.removeChild(containerRef.current.firstChild);
-    }
+  // Scene setup
+  const scene = new THREE.Scene();
+  sceneRef.current = scene;
+  scene.background = new THREE.Color(0xe0e0e0);
 
-    console.log('Starting STL Viewer with url:', url);
-    setIsLoading(true);
-    setError(null);
+  // Camera setup
+  const camera = new THREE.PerspectiveCamera(
+    75,
+    container.clientWidth / container.clientHeight,
+    0.1,
+    1000
+  );
+  camera.position.z = 100;
 
-    // Scene setup
-    const scene = new THREE.Scene();
-    sceneRef.current = scene;
-    scene.background = new THREE.Color(0xe0e0e0);
-
-    // Camera setup
-    const camera = new THREE.PerspectiveCamera(
-      75,
-      containerRef.current.clientWidth / containerRef.current.clientHeight,
-      0.1,
-      1000
-    );
-    camera.position.z = 100;
-
-    // Renderer setup
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: true
-    });
-    rendererRef.current = renderer;
-    renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight);
-    containerRef.current.appendChild(renderer.domElement);
+  // Renderer setup
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: true
+  });
+  rendererRef.current = renderer;
+  renderer.setSize(container.clientWidth, container.clientHeight);
+  container.appendChild(renderer.domElement);
 
     // Controls setup
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -56,11 +52,18 @@ const STLViewer = ({ url }: STLViewerProps) => {
     controls.dampingFactor = 0.05;
 
     // Lighting setup
+    interface LightConfig {
+      position: [number, number, number];  // Tuple type for x, y, z
+      intensity: number;
+      color: number;
+    }
+
+    // Lighting setup
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
 
-    // Enhanced directional lights setup
-    const lights = [
+    // Enhanced directional lights setup with explicit typing
+    const lights: LightConfig[] = [
       { position: [1, 1, 1], intensity: 0.8, color: 0xffffff },    // Main light
       { position: [-1, -1, 1], intensity: 0.5, color: 0xc0c0c0 },  // Fill light
       { position: [0.5, -1, -0.5], intensity: 0.4, color: 0xc0c0c0 }, // Back light
@@ -143,9 +146,13 @@ const STLViewer = ({ url }: STLViewerProps) => {
         (xhr) => {
           console.log(`${(xhr.loaded / xhr.total) * 100}% loaded`);
         },
-        (error) => {
+        (error: unknown) => {
           console.error('Error loading STL:', error);
-          setError(`Failed to load model: ${error.message}`);
+          if (error instanceof Error) {
+            setError(`Failed to load model: ${error.message}`);
+          } else {
+            setError('Failed to load model: Unknown error');
+          }
           setIsLoading(false);
         }
       );
@@ -168,6 +175,7 @@ const STLViewer = ({ url }: STLViewerProps) => {
 
     // Cleanup
     return () => {
+      const containerForCleanup = container; // Capture container in cleanup
       console.log('Cleaning up STL viewer');
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
@@ -184,8 +192,8 @@ const STLViewer = ({ url }: STLViewerProps) => {
       if (rendererRef.current) {
         rendererRef.current.dispose();
       }
-      while (containerRef.current?.firstChild) {
-        containerRef.current.removeChild(containerRef.current.firstChild);
+      while (containerForCleanup.firstChild) {
+        containerForCleanup.removeChild(containerForCleanup.firstChild);
       }
     };
   }, [url]);

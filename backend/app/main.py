@@ -16,7 +16,7 @@ from datetime import timedelta
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.services.bin_generation_service import BinGenerationService
-from .services import BaseplateService
+from app.services.baseplate_generator_service import BaseplateService
 from fastapi import Request
 from fastapi.staticfiles import StaticFiles
 from core.gridfinity_baseplate import GridfinityBaseplate, Unit
@@ -74,6 +74,28 @@ class DrawerGridResponse(BaseModel):
     units: list[UnitResponse]
     gridSizeX: int
     gridSizeY: int
+    
+class PlacedBinRequest(BaseModel):
+    id: str
+    width: float
+    depth: float
+    x: float
+    y: float
+    unitX: int
+    unitY: int
+    unitWidth: int
+    unitDepth: int
+    
+class GenerateDrawerModelsRequest(BaseModel):
+    name: str
+    width: float
+    depth: float
+    height: float
+    bins: list[PlacedBinRequest]
+    
+class GenerateDrawerModelsResponse(BaseModel):
+    message: str
+    modelIds: list[str]
 
 # Dependency
 def get_db():
@@ -308,4 +330,86 @@ async def calculate_drawer_grid(
         raise HTTPException(
             status_code=500,
             detail=f"Error calculating drawer grid: {str(e)}"
+        )
+        
+@app.post("/drawers/generate-models/", response_model=GenerateDrawerModelsResponse)
+async def generate_drawer_models(
+    request: GenerateDrawerModelsRequest,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Create drawer record
+        new_drawer = models.Drawer(
+            name=request.name,
+            width=request.width,
+            depth=request.depth,
+            height=request.height,
+            owner_id=1  # Using default user for now, should be current_user.id
+        )
+        db.add(new_drawer)
+        db.flush()  # Get the drawer ID
+        
+        model_ids = []
+        
+        # First generate baseplate
+        config = GridfinityConfig()
+        baseplate_service = BaseplateService(
+            db=db,
+            base_output_dir=Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output")
+        )
+        
+        baseplate_name = f"Baseplate_{request.name}"
+        baseplate, baseplate_files = await baseplate_service.generate_baseplate(
+            baseplate_name,
+            width=request.width,
+            depth=request.depth
+        )
+        
+        for file in baseplate_files:
+            model_ids.append(str(file.id))
+            
+        # Then generate bins
+        bin_service = BinGenerationService(
+            db=db,
+            base_output_dir=Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output")
+        )
+        
+        for bin_request in request.bins:
+            bin_name = f"Bin_{bin_request.id.split('-')[0]}"
+            bin_model, bin_files = await bin_service.generate_bin(
+                bin_name,
+                width=bin_request.width,
+                depth=bin_request.depth,
+                height=request.height
+            )
+            
+            for file in bin_files:
+                model_ids.append(str(file.id))
+                
+            # Create bin record linked to the drawer
+            new_bin = models.Bin(
+                name=bin_name,
+                width=bin_request.width,
+                depth=bin_request.depth,
+                height=request.height,
+                x_position=bin_request.x,
+                y_position=bin_request.y,
+                drawer_id=new_drawer.id,
+                model_id=bin_model.id
+            )
+            db.add(new_bin)
+        
+        # Commit all changes
+        db.commit()
+        
+        return GenerateDrawerModelsResponse(
+            message=f"Drawer {request.name} models generated successfully",
+            modelIds=model_ids
+        )
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating drawer models: {str(e)}"
         )

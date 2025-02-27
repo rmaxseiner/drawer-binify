@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { Suspense } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import STLViewer from '@/components/viewers/STLViewer';
@@ -51,7 +51,8 @@ const ViewerInstructions = () => (
   </div>
 );
 
-export default function StlViewPage() {
+// Create a wrapper component that uses searchParams
+function STLViewContent() {
   const searchParams = useSearchParams();
   const modelUrl = searchParams.get('url');
 
@@ -91,5 +92,28 @@ export default function StlViewPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// Main page component wrapped in Suspense
+export default function StlViewPage() {
+  return (
+    <Suspense fallback={
+      <div className="p-8 max-w-7xl mx-auto">
+        <Card>
+          <CardHeader>
+            <CardTitle>Loading...</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="animate-pulse space-y-4">
+              <div className="h-32 bg-secondary rounded"></div>
+              <div className="h-[600px] bg-secondary rounded"></div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    }>
+      <STLViewContent />
+    </Suspense>
   );
 }
