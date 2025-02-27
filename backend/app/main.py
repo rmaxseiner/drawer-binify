@@ -19,6 +19,8 @@ from app.services.bin_generation_service import BinGenerationService
 from .services import BaseplateService
 from fastapi import Request
 from fastapi.staticfiles import StaticFiles
+from core.gridfinity_baseplate import GridfinityBaseplate, Unit
+from core.gridfinity_config import GridfinityConfig
 
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
@@ -54,6 +56,24 @@ class BinGenerateResponse(BaseModel):
     depth: float
     height: float
     files: list[GeneratedFileResponse]
+    
+class DrawerGridRequest(BaseModel):
+    name: str
+    width: float
+    depth: float
+    height: float
+    
+class UnitResponse(BaseModel):
+    width: float
+    depth: float
+    x_offset: float
+    y_offset: float
+    is_standard: bool
+    
+class DrawerGridResponse(BaseModel):
+    units: list[UnitResponse]
+    gridSizeX: int
+    gridSizeY: int
 
 # Dependency
 def get_db():
@@ -251,3 +271,41 @@ async def delete_model_endpoint(
     if not success:
         raise HTTPException(status_code=404, detail="Model not found")
     return {"message": "Model deleted successfully"}
+
+@app.post("/drawers/grid-layout/", response_model=DrawerGridResponse)
+async def calculate_drawer_grid(
+    request: DrawerGridRequest
+):
+    try:
+        # Create a GridfinityBaseplate instance
+        config = GridfinityConfig()
+        baseplate = GridfinityBaseplate(
+            drawer_width=request.width,
+            drawer_depth=request.depth,
+            config=config
+        )
+        
+        # Calculate grid units
+        units = baseplate.grid_divider()
+        
+        # Convert to response model
+        unit_responses = [
+            UnitResponse(
+                width=unit.width,
+                depth=unit.depth,
+                x_offset=unit.x_offset,
+                y_offset=unit.y_offset,
+                is_standard=unit.is_standard
+            ) for unit in units
+        ]
+        
+        return DrawerGridResponse(
+            units=unit_responses,
+            gridSizeX=baseplate.num_squares_x,
+            gridSizeY=baseplate.num_squares_y
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error calculating drawer grid: {str(e)}"
+        )

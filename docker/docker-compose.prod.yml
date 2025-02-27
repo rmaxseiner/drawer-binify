@@ -1,25 +1,32 @@
 services:
   frontend:
     build:
-      context: .
+      context: ..
       dockerfile: docker/frontend/Dockerfile
     ports:
-      - "80:80"
+      - "3001:80"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
     depends_on:
       - backend
     networks:
       - gridfinity-prod
+    restart: unless-stopped
 
   backend:
     build:
-      context: .
+      context: ..
       dockerfile: docker/backend/Dockerfile
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      - MODEL_OUTPUT_DIR=/app/model-output
+    volumes:
+      - model_output:/app/model-output
     depends_on:
       - postgres
     networks:
       - gridfinity-prod
+    restart: unless-stopped
 
   postgres:
     image: postgres:15
@@ -29,12 +36,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_prod_data:/var/lib/postgresql/data
-      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ../docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - gridfinity-prod
+    restart: unless-stopped
 
 volumes:
   postgres_prod_data:
+  model_output:
 
 networks:
   gridfinity-prod:

@@ -1,8 +1,11 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import {LabelProps} from "@radix-ui/react-label";
 
-export interface LabelProps
-  extends React.LabelHTMLAttributes<HTMLLabelElement> {}
+export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+
+  customProp?: string;
+}
 
 const Label = React.forwardRef<HTMLLabelElement, LabelProps>(
   ({ className, ...props }, ref) => (
