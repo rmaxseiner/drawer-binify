@@ -33,7 +33,7 @@ class Bin(Base):
     __tablename__ = "bins"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String)
+    name = Column(String, nullable=True)
     width = Column(Float)
     depth = Column(Float)
     height = Column(Float)
@@ -42,6 +42,9 @@ class Bin(Base):
     drawer = relationship("Drawer", back_populates="bins")
     created_at = Column(DateTime, default=datetime.utcnow)
     files = relationship("GeneratedFile", back_populates="bin")
+    # Position within drawer
+    x_position = Column(Float, nullable=True)
+    y_position = Column(Float, nullable=True)
 
 class GeneratedFile(Base):
     __tablename__ = "generated_files"

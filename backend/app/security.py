@@ -7,7 +7,7 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from app.utils.password import verify_password
 from . import crud, models, schemas
-from .database import SessionLocal
+from .database import get_db
 
 # Security constants
 SECRET_KEY = "your-secret-key-keep-it-secret"  # Change this in production!
@@ -43,7 +43,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 async def get_current_user(
         token: str = Depends(oauth2_scheme),
-        db: Session = Depends(SessionLocal)
+        db: Session = Depends(get_db)
 ) -> models.User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -51,15 +51,28 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
+        # Log token for debugging (remove in production)
+        print(f"Token received: {token[:10]}...")
+        
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
+            print("Token payload missing username")
             raise credentials_exception
         token_data = schemas.TokenData(username=username)
-    except JWTError:
+        
+        print(f"Looking up user: {username}")
+        user = crud.get_user_by_username(db, username=token_data.username)
+        
+        if user is None:
+            print(f"User not found: {username}")
+            raise credentials_exception
+            
+        print(f"User authenticated: {username}")
+        return user
+    except JWTError as e:
+        print(f"JWT Error: {e}")
         raise credentials_exception
-
-    user = crud.get_user_by_username(db, username=token_data.username)
-    if user is None:
+    except Exception as e:
+        print(f"Unexpected error in get_current_user: {e}")
         raise credentials_exception
-    return user

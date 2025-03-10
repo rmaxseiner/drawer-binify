@@ -1,7 +1,7 @@
 """convert_to_relative_paths
 
-Revision ID: xxx
-Revises: yyy
+Revision ID: f8f2e4b8f3b5
+Revises: 85e507dd8a08
 Create Date: 2025-02-03 12:00:00.000000
 
 """
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 from pathlib import Path
 
 # revision identifiers, used by Alembic
-revision = 'xxx'
-down_revision = 'yyy'
+revision = 'f8f2e4b8f3b5'
+down_revision = '85e507dd8a08'
 branch_labels = None
 depends_on = None
 
@@ -21,7 +21,7 @@ def upgrade() -> None:
 
     # Select all generated files
     files = conn.execute(
-        'SELECT id, file_path FROM generated_files'
+        sa.text('SELECT id, file_path FROM generated_files')
     ).fetchall()
 
     # Update each file path to be relative
@@ -30,8 +30,8 @@ def upgrade() -> None:
             # Convert absolute path to relative
             relative_path = Path(file_path).name
             conn.execute(
-                'UPDATE generated_files SET file_path = %s WHERE id = %s',
-                (relative_path, file_id)
+                sa.text('UPDATE generated_files SET file_path = :path WHERE id = :id'),
+                {"path": relative_path, "id": file_id}
             )
 
 def downgrade() -> None:

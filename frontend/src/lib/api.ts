@@ -66,6 +66,62 @@ export async function deleteModel(modelId: string) {
   return response.json();
 }
 
+export async function getUserInfo() {
+  try {
+    // Check if token exists
+    const token = localStorage.getItem('token');
+    if (!token) {
+      return {
+        username: 'Guest',
+        email: '',
+        first_name: '',
+        last_name: ''
+      };
+    }
+
+    console.log('Using token to get user info...');
+    
+    // Make the real API request
+    const response = await fetchWithAuth('/users/me/');
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get user info: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching user info:', error);
+    // Return default user to prevent UI errors
+    return {
+      username: 'Guest',
+      email: '',
+      first_name: '',
+      last_name: ''
+    };
+  }
+}
+
+export async function getUserDrawers() {
+  try {
+    console.log('Fetching user drawers from API...');
+    
+    // Make the actual API request
+    const response = await fetchWithAuth('/drawers/');
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get user drawers: ${response.status}`);
+    }
+    
+    const drawers = await response.json();
+    console.log('Retrieved drawers:', drawers);
+    return drawers;
+  } catch (error) {
+    console.error('Error fetching user drawers:', error);
+    // Return empty array instead of throwing
+    return [];
+  }
+}
+
 export interface PlacedBin {
   id: string;
   width: number;
@@ -105,18 +161,10 @@ export async function generateDrawerModels(data: GenerateDrawerModelsRequest) {
 
 export async function calculateDrawerGrid(dimensions: DrawerDimensions): Promise<DrawerGridResponse> {
   try {
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    const token = localStorage.getItem('token');
-    
-    if (!token) {
-      throw new Error('Authentication required');
-    }
-    
-    const response = await fetch(`${API_URL}/drawers/grid-layout/`, {
+    const response = await fetchWithAuth('/drawers/grid-layout/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify(dimensions),
     });
@@ -134,6 +182,95 @@ export async function calculateDrawerGrid(dimensions: DrawerDimensions): Promise
     return await response.json();
   } catch (error) {
     console.error("Error in calculateDrawerGrid:", error);
+    throw error;
+  }
+}
+
+export async function deleteDrawer(drawerId: number): Promise<{ message: string }> {
+  try {
+    const response = await fetchWithAuth(`/drawers/${drawerId}`, {
+      method: 'DELETE'
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to delete drawer: ${text}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Error deleting drawer:", error);
+    throw error;
+  }
+}
+
+export async function getDrawer(drawerId: number) {
+  try {
+    const response = await fetchWithAuth(`/drawers/${drawerId}`);
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to get drawer: ${text}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Error getting drawer:", error);
+    throw error;
+  }
+}
+
+export async function updateDrawer(drawerId: number, drawerData: DrawerDimensions) {
+  try {
+    const response = await fetchWithAuth(`/drawers/${drawerId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(drawerData),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to update drawer: ${text}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Error updating drawer:", error);
+    throw error;
+  }
+}
+
+export async function updateDrawerBins(drawerId: number, bins: PlacedBin[]) {
+  try {
+    // Convert the frontend bin format to the expected backend format
+    const backendBinFormat = bins.map(bin => ({
+      width: bin.width,
+      depth: bin.depth,
+      x_position: bin.x,
+      y_position: bin.y,
+      // ID might be in format "bin-1x2-12345", so we extract just the identifier part
+      // If ID is numeric, use it as is; otherwise, set it to null to create a new bin
+      id: bin.id && !bin.id.includes('-') && !isNaN(Number(bin.id)) ? Number(bin.id) : null
+    }));
+
+    const response = await fetchWithAuth(`/drawers/${drawerId}/bins`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ bins: backendBinFormat }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to update drawer bins: ${text}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Error updating drawer bins:", error);
     throw error;
   }
 }

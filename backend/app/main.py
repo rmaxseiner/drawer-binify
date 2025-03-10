@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -21,6 +22,37 @@ from fastapi import Request
 from fastapi.staticfiles import StaticFiles
 from core.gridfinity_baseplate import GridfinityBaseplate, Unit
 from core.gridfinity_config import GridfinityConfig
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
+import logging
+
+logger = logging.getLogger(__name__)
+
+class QueryFilterMiddleware(BaseHTTPMiddleware):
+    """Middleware to filter out problematic query parameters."""
+    
+    async def dispatch(self, request: Request, call_next):
+        # Create a copy of the original request
+        scope = request.scope.copy()
+        
+        # Get and filter query parameters
+        query_params = []
+        for param_name, param_value in request.query_params.items():
+            # Skip problematic parameters
+            if param_name == "local_kw":
+                logger.info(f"Filtering out query parameter: {param_name}={param_value}")
+                continue
+            query_params.append((param_name.encode(), param_value.encode()))
+        
+        # Replace query parameters in the scope
+        scope["query_string"] = b"&".join(b"=".join(param) for param in query_params)
+        
+        # Create a new request with filtered query parameters
+        filtered_request = Request(scope=scope, receive=request.receive)
+        
+        # Process the request with filtered parameters
+        response = await call_next(filtered_request)
+        return response
 
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
@@ -30,12 +62,15 @@ app = FastAPI(title="Gridfinity API")
 # Update after creating the app
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001"],  # Add your frontend URL
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:8000"],  # Specific origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"]
 )
+
+# Add our query parameter filter middleware
+app.add_middleware(QueryFilterMiddleware)
 app.mount("/files", StaticFiles(directory="/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output"), name="files")
 
 
@@ -110,17 +145,24 @@ async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
+    print(f"Login attempt for user: {form_data.username}")
+    
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
+        print(f"Authentication failed for user: {form_data.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    print(f"Authentication successful for user: {form_data.username}")
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
+    print(f"Generated token for user {user.username}: {access_token[:10]}...")
+    
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.post("/users/", response_model=schemas.User)
@@ -130,11 +172,78 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Email already registered")
     return crud.create_user(db=db, user=user)
 
-@app.get("/users/me/", response_model=schemas.User)
+@app.get("/users/me/")
 async def read_users_me(
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
+    # Explicitly declare optional query parameters to prevent them from being
+    # passed to other dependencies
+    local_kw: str = None,
 ):
-    return current_user
+    # Return a dict instead of the model object to avoid validation issues
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "first_name": current_user.first_name or "",
+        "last_name": current_user.last_name or "",
+        "created_at": current_user.created_at
+    }
+
+@app.post("/users/change-password/")
+async def change_password(
+    password_data: schemas.PasswordChange,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    success = crud.change_user_password(
+        db, 
+        user_id=current_user.id,
+        current_password=password_data.current_password,
+        new_password=password_data.new_password
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+    
+    return {"message": "Password updated successfully"}
+
+@app.put("/users/update-profile/", response_model=schemas.User)
+async def update_profile(
+    user_update: schemas.UserUpdate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    updated_user = crud.update_user(db, current_user.id, user_update)
+    if not updated_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Username or email already taken"
+        )
+    return updated_user
+
+@app.post("/users/change-password/")
+async def change_password(
+    password_change: schemas.PasswordChange,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    success = crud.change_user_password(
+        db, 
+        current_user.id, 
+        password_change.current_password, 
+        password_change.new_password
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Current password is incorrect"
+        )
+    
+    return {"message": "Password changed successfully"}
 
 @app.post("/drawers/", response_model=schemas.Drawer)
 def create_drawer(
@@ -144,15 +253,43 @@ def create_drawer(
 ):
     return crud.create_drawer(db=db, drawer=drawer, user_id=current_user.id)
 
-@app.get("/drawers/", response_model=List[schemas.DrawerWithBins])
+@app.get("/drawers/")
 def read_drawers(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
+    # Explicitly declare optional query parameters to prevent them from being
+    # passed to other dependencies
+    local_kw: str = None,
 ):
     drawers = crud.get_user_drawers(db, user_id=current_user.id)
-    return drawers
+    # Convert drawer objects to dict to avoid validation issues
+    drawer_list = []
+    for drawer in drawers:
+        drawer_dict = {
+            "id": drawer.id,
+            "name": drawer.name,
+            "width": drawer.width,
+            "depth": drawer.depth,
+            "height": drawer.height,
+            "owner_id": drawer.owner_id,
+            "created_at": drawer.created_at,
+            "bins": []
+        }
+        for bin in drawer.bins:
+            bin_dict = {
+                "id": bin.id,
+                "width": bin.width,
+                "depth": bin.depth, 
+                "height": bin.height,
+                "is_standard": bin.is_standard,
+                "drawer_id": bin.drawer_id,
+                "created_at": bin.created_at
+            }
+            drawer_dict["bins"].append(bin_dict)
+        drawer_list.append(drawer_dict)
+    return drawer_list
 
 @app.get("/drawers/{drawer_id}", response_model=schemas.DrawerWithBins)
 def read_drawer(
@@ -181,6 +318,27 @@ def create_bin_for_drawer(
         raise HTTPException(status_code=403, detail="Not authorized to modify this drawer")
     bin.drawer_id = drawer_id
     return crud.create_bin(db=db, bin=bin)
+
+@app.put("/drawers/{drawer_id}/bins", response_model=dict)
+def update_drawer_bins(
+    drawer_id: int,
+    bin_data: schemas.BinUpdateList,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Update all bins for a drawer"""
+    
+    # Verify drawer exists and belongs to the user
+    drawer = crud.get_drawer(db, drawer_id=drawer_id)
+    if drawer is None:
+        raise HTTPException(status_code=404, detail="Drawer not found")
+    if drawer.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to modify this drawer")
+    
+    # Use the CRUD function to update bins
+    updated_bins = crud.update_drawer_bins(db, drawer_id=drawer_id, bins_data=bin_data.bins)
+    
+    return {"message": "Bins updated successfully", "bin_count": len(updated_bins)}
 
 @app.delete("/drawers/{drawer_id}")
 def delete_drawer(
@@ -269,7 +427,13 @@ async def generate_baseplate_endpoint(
 
 
 @app.get("/models/", response_model=List[schemas.ModelResponse])
-async def get_models_endpoint(request: Request, db: Session = Depends(get_db)):
+async def get_models_endpoint(
+    request: Request, 
+    db: Session = Depends(get_db),
+    # Explicitly declare optional query parameters to prevent them from being
+    # passed to other dependencies
+    local_kw: str = None,
+):
     model_service = ModelService(db)
     models = model_service.retrieve_models()
 
@@ -335,7 +499,8 @@ async def calculate_drawer_grid(
 @app.post("/drawers/generate-models/", response_model=GenerateDrawerModelsResponse)
 async def generate_drawer_models(
     request: GenerateDrawerModelsRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
 ):
     try:
         # Create drawer record
@@ -344,7 +509,7 @@ async def generate_drawer_models(
             width=request.width,
             depth=request.depth,
             height=request.height,
-            owner_id=1  # Using default user for now, should be current_user.id
+            owner_id=current_user.id
         )
         db.add(new_drawer)
         db.flush()  # Get the drawer ID

@@ -74,3 +74,85 @@ def update_drawer(
         db.refresh(db_drawer)
         return db_drawer
     return None
+    
+def update_user(
+    db: Session,
+    user_id: int,
+    user_update: schemas.UserUpdate
+) -> Optional[models.User]:
+    db_user = get_user(db, user_id)
+    if db_user:
+        update_data = user_update.model_dump(exclude_unset=True)
+        
+        # Check if username is being updated and it's not already taken
+        if 'username' in update_data and update_data['username'] != db_user.username:
+            existing_user = get_user_by_username(db, update_data['username'])
+            if existing_user:
+                return None  # Username already taken
+        
+        # Check if email is being updated and it's not already taken
+        if 'email' in update_data and update_data['email'] != db_user.email:
+            existing_user = get_user_by_email(db, update_data['email'])
+            if existing_user:
+                return None  # Email already taken
+        
+        for key, value in update_data.items():
+            setattr(db_user, key, value)
+            
+        db.commit()
+        db.refresh(db_user)
+        return db_user
+    return None
+    
+def change_user_password(
+    db: Session,
+    user_id: int,
+    current_password: str,
+    new_password: str
+) -> bool:
+    from app.utils.password import verify_password, get_password_hash
+    
+    db_user = get_user(db, user_id)
+    if not db_user:
+        return False
+        
+    if not verify_password(current_password, db_user.hashed_password):
+        return False
+        
+    db_user.hashed_password = get_password_hash(new_password)
+    db.commit()
+    return True
+
+def update_drawer_bins(
+    db: Session, 
+    drawer_id: int, 
+    bins_data: List[schemas.BinUpdate]
+) -> List[models.Bin]:
+    """Update all bins for a drawer - removes existing bins and creates new ones"""
+    
+    # Delete all existing bins for this drawer
+    db.query(models.Bin).filter(models.Bin.drawer_id == drawer_id).delete()
+    db.flush()
+    
+    # Create new bins based on the input data
+    updated_bins = []
+    for bin_data in bins_data:
+        new_bin = models.Bin(
+            drawer_id=drawer_id,
+            width=bin_data.width,
+            depth=bin_data.depth,
+            height=50.0,  # Default height
+            is_standard=True,  # Default to standard
+            x_position=bin_data.x_position,
+            y_position=bin_data.y_position
+        )
+        db.add(new_bin)
+        updated_bins.append(new_bin)
+    
+    db.commit()
+    
+    # Refresh all the bin objects to get their IDs
+    for bin_obj in updated_bins:
+        db.refresh(bin_obj)
+        
+    return updated_bins

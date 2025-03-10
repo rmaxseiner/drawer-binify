@@ -58,6 +58,16 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+    
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    email: Optional[EmailStr] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
 
 class DrawerWithBins(Drawer):
     bins: List[Bin]
@@ -84,3 +94,13 @@ class ModelResponse(BaseModel):
     depth: float
     height: float
     file_path: str
+    
+class BinUpdate(BaseModel):
+    id: Optional[int] = None
+    width: float
+    depth: float
+    x_position: float
+    y_position: float
+
+class BinUpdateList(BaseModel):
+    bins: List[BinUpdate]

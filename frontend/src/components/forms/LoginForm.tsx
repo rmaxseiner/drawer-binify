@@ -15,15 +15,45 @@ export default function LoginForm() {
     setIsLoading(true);
 
     try {
+      console.log('Attempting login with username:', username);
       const response = await login({ username, password });
-      setToken(response.access_token);
-
-      // Use window.location for navigation after login
-      window.location.href = '/dashboard';
-
+      
+      if (response && response.access_token) {
+        console.log('Login successful, token received:', response.access_token.slice(0, 10) + '...');
+        
+        // First clear any existing token
+        localStorage.removeItem('token');
+        
+        // Then set the new token
+        setToken(response.access_token);
+        
+        // Verify token was stored
+        const storedToken = localStorage.getItem('token');
+        if (storedToken) {
+          console.log('Token successfully stored in localStorage');
+          
+          // Add a small delay before redirect
+          setTimeout(() => {
+            console.log('Redirecting to dashboard');
+            window.location.href = '/dashboard';
+          }, 500);
+        } else {
+          console.error('Failed to store token in localStorage');
+          setError('Login failed: Could not store authentication token');
+        }
+      } else {
+        console.error('Login response missing token:', response);
+        setError('Login failed: Invalid response from server');
+      }
     } catch (err) {
       console.error('Login error:', err);
-      setError('Invalid username or password');
+      
+      // More user-friendly error message
+      if (err instanceof Error) {
+        setError(`Login failed: ${err.message}`);
+      } else {
+        setError('Invalid username or password');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -83,6 +113,15 @@ export default function LoginForm() {
             >
               {isLoading ? 'Signing in...' : 'Sign in'}
             </button>
+          </div>
+          
+          <div className="text-sm text-center mt-4">
+            <p>
+              Don't have an account?{' '}
+              <a href="/register" className="font-medium text-indigo-600 hover:text-indigo-500">
+                Sign up
+              </a>
+            </p>
           </div>
         </form>
       </div>
