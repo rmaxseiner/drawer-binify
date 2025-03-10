@@ -48,6 +48,9 @@ class Bin(BinBase):
     id: int
     drawer_id: int
     created_at: datetime
+    x_position: Optional[float] = None
+    y_position: Optional[float] = None
+    name: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -143,20 +143,63 @@ export interface GenerateDrawerModelsRequest {
 }
 
 export async function generateDrawerModels(data: GenerateDrawerModelsRequest) {
-  const response = await fetchWithAuth('/drawers/generate-models/', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(data),
-  });
+  // Log the request data for debugging
+  console.log('Generating drawer models with data:', data);
   
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Failed to generate drawer models: ${text}`);
+  try {
+    // Ensure all bins have valid x and y coordinates
+    const validatedData = {
+      ...data,
+      bins: data.bins.map(bin => {
+        // If x or y is null, undefined, or not a number, set to 0
+        return {
+          ...bin,
+          x: bin.x != null ? bin.x : 0,
+          y: bin.y != null ? bin.y : 0,
+          // Ensure unitX and unitY are numbers and not null/undefined
+          unitX: bin.unitX != null ? bin.unitX : 0,
+          unitY: bin.unitY != null ? bin.unitY : 0,
+        };
+      })
+    };
+    
+    const jsonData = JSON.stringify(validatedData);
+    console.log('Request JSON after validation:', jsonData);
+    
+    const response = await fetchWithAuth('/drawers/generate-models/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: jsonData,
+    });
+    
+    if (!response.ok) {
+      // Try to parse error as JSON first
+      const text = await response.text();
+      console.error('Failed to generate drawer models:', {
+        status: response.status,
+        statusText: response.statusText,
+        responseBody: text
+      });
+      
+      // Try to parse as JSON to provide more detailed error information
+      try {
+        const errorData = JSON.parse(text);
+        throw new Error(`Failed to generate drawer models: ${JSON.stringify(errorData)}`);
+      } catch (parseError) {
+        // If parsing fails, use the raw text
+        throw new Error(`Failed to generate drawer models: ${text}`);
+      }
+    }
+    
+    const result = await response.json();
+    console.log('Model generation success:', result);
+    return result;
+  } catch (error) {
+    console.error('Exception in generateDrawerModels:', error);
+    throw error;
   }
-  
-  return response.json();
 }
 
 export async function calculateDrawerGrid(dimensions: DrawerDimensions): Promise<DrawerGridResponse> {

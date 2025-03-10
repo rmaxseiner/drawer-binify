@@ -1,9 +1,12 @@
 from pathlib import Path
 import os
-from fastapi import FastAPI, Depends, HTTPException, status
+import sys
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Dict, Any
 from app.services.model_service import ModelService
 from . import crud, models, schemas
 from .database import SessionLocal, engine
@@ -25,8 +28,54 @@ from core.gridfinity_config import GridfinityConfig
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 import logging
+import logging.handlers
 
-logger = logging.getLogger(__name__)
+# Configure logging
+def setup_logging():
+    # Create logs directory if it doesn't exist
+    log_dir = Path(__file__).parents[2] / "logs"
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "drawerfinity.log"
+    
+    # Create formatters
+    file_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    console_formatter = logging.Formatter(
+        '%(levelname)s - %(name)s - %(message)s'
+    )
+    
+    # Create handlers
+    # File handler with rotation (10 MB max, keep 5 backup files)
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=10*1024*1024, backupCount=5
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(file_formatter)
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.DEBUG)
+    console_handler.setFormatter(console_formatter)
+    
+    # Get the root logger and configure it
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    
+    # Remove existing handlers to avoid duplicates on reload
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # Add the new handlers
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    
+    # Return application logger
+    return logging.getLogger(__name__)
+
+# Initialize logger
+logger = setup_logging()
+logger.info("Logging system initialized")
 
 class QueryFilterMiddleware(BaseHTTPMiddleware):
     """Middleware to filter out problematic query parameters."""
@@ -58,6 +107,21 @@ class QueryFilterMiddleware(BaseHTTPMiddleware):
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Gridfinity API")
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Custom exception handler for validation errors to log and return detailed information.
+    """
+    # Log detailed validation errors
+    error_details = exc.errors()
+    logger.error(f"Validation errors on path {request.url.path}: {error_details}")
+    
+    # Return the validation errors to the client
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": error_details},
+    )
 
 # Update after creating the app
 app.add_middleware(
@@ -498,21 +562,83 @@ async def calculate_drawer_grid(
         
 @app.post("/drawers/generate-models/", response_model=GenerateDrawerModelsResponse)
 async def generate_drawer_models(
-    request: GenerateDrawerModelsRequest,
+    request: dict,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    """
+    Modified to receive raw dict instead of validated model to debug validation issues
+    """
+    logger.info(f"Generate drawer models request received: {request}")
+    
+    # Manually validate the request
+    try:
+        # Check for required fields
+        if not isinstance(request, dict):
+            raise ValueError("Request must be a JSON object")
+        
+        required_fields = ["name", "width", "depth", "height", "bins"]
+        for field in required_fields:
+            if field not in request:
+                raise ValueError(f"Missing required field: {field}")
+        
+        # Validate bins array
+        if not isinstance(request["bins"], list):
+            raise ValueError("'bins' must be an array")
+        
+        for i, bin_item in enumerate(request["bins"]):
+            if not isinstance(bin_item, dict):
+                raise ValueError(f"Bin at index {i} must be an object")
+            
+            bin_fields = ["id", "width", "depth", "x", "y", "unitX", "unitY", "unitWidth", "unitDepth"]
+            for field in bin_fields:
+                if field not in bin_item:
+                    raise ValueError(f"Bin at index {i} is missing required field: {field}")
+        
+        # Convert to validated model
+        validated_request = GenerateDrawerModelsRequest(
+            name=request["name"],
+            width=float(request["width"]),
+            depth=float(request["depth"]),
+            height=float(request["height"]),
+            bins=[
+                PlacedBinRequest(
+                    id=bin_item["id"],
+                    width=float(bin_item["width"]),
+                    depth=float(bin_item["depth"]),
+                    x=float(bin_item["x"]),
+                    y=float(bin_item["y"]),
+                    unitX=int(bin_item["unitX"]),
+                    unitY=int(bin_item["unitY"]),
+                    unitWidth=int(bin_item["unitWidth"]),
+                    unitDepth=int(bin_item["unitDepth"])
+                ) for bin_item in request["bins"]
+            ]
+        )
+        
+        logger.info(f"Validated request for drawer: {validated_request.name} - "
+                    f"dimensions: {validated_request.width}x{validated_request.depth}x{validated_request.height} - "
+                    f"bins count: {len(validated_request.bins)}")
+    except Exception as e:
+        logger.error(f"Validation error in generate_drawer_models: {str(e)}")
+        logger.error(f"Request data: {request}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid request data: {str(e)}"
+        )
+    
     try:
         # Create drawer record
         new_drawer = models.Drawer(
-            name=request.name,
-            width=request.width,
-            depth=request.depth,
-            height=request.height,
+            name=validated_request.name,
+            width=validated_request.width,
+            depth=validated_request.depth,
+            height=validated_request.height,
             owner_id=current_user.id
         )
         db.add(new_drawer)
         db.flush()  # Get the drawer ID
+        logger.debug(f"Created drawer record with ID: {new_drawer.id}")
         
         model_ids = []
         
@@ -523,15 +649,26 @@ async def generate_drawer_models(
             base_output_dir=Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output")
         )
         
-        baseplate_name = f"Baseplate_{request.name}"
-        baseplate, baseplate_files = await baseplate_service.generate_baseplate(
-            baseplate_name,
-            width=request.width,
-            depth=request.depth
-        )
-        
-        for file in baseplate_files:
-            model_ids.append(str(file.id))
+        logger.debug(f"Generating baseplate for drawer {validated_request.name}")
+        baseplate_name = f"Baseplate_{validated_request.name}"
+        try:
+            baseplate, baseplate_files = await baseplate_service.generate_baseplate(
+                baseplate_name,
+                width=validated_request.width,
+                depth=validated_request.depth
+            )
+            
+            for file in baseplate_files:
+                model_ids.append(str(file.id))
+                logger.debug(f"Added baseplate file ID: {file.id}, path: {file.file_path}")
+        except Exception as e:
+            logger.exception(f"Failed to generate baseplate: {str(e)}")
+            # Roll back the transaction and re-raise
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to generate baseplate: {str(e)}"
+            )
             
         # Then generate bins
         bin_service = BinGenerationService(
@@ -539,42 +676,66 @@ async def generate_drawer_models(
             base_output_dir=Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output")
         )
         
-        for bin_request in request.bins:
+        for i, bin_request in enumerate(validated_request.bins):
             bin_name = f"Bin_{bin_request.id.split('-')[0]}"
-            bin_model, bin_files = await bin_service.generate_bin(
-                bin_name,
-                width=bin_request.width,
-                depth=bin_request.depth,
-                height=request.height
-            )
+            logger.debug(f"Generating bin {i+1}/{len(validated_request.bins)}: {bin_name} - "
+                       f"dimensions: {bin_request.width}x{bin_request.depth}x{validated_request.height}")
             
-            for file in bin_files:
-                model_ids.append(str(file.id))
+            try:
+                bin_model, bin_files = await bin_service.generate_bin(
+                    bin_name,
+                    width=bin_request.width,
+                    depth=bin_request.depth,
+                    height=validated_request.height
+                )
                 
-            # Create bin record linked to the drawer
-            new_bin = models.Bin(
-                name=bin_name,
-                width=bin_request.width,
-                depth=bin_request.depth,
-                height=request.height,
-                x_position=bin_request.x,
-                y_position=bin_request.y,
-                drawer_id=new_drawer.id,
-                model_id=bin_model.id
-            )
-            db.add(new_bin)
+                for file in bin_files:
+                    model_ids.append(str(file.id))
+                    logger.debug(f"Added bin file ID: {file.id}, path: {file.file_path}")
+                    
+                # Create bin record linked to the drawer
+                new_bin = models.Bin(
+                    name=bin_name,
+                    width=bin_request.width,
+                    depth=bin_request.depth,
+                    height=validated_request.height,
+                    x_position=bin_request.x,
+                    y_position=bin_request.y,
+                    drawer_id=new_drawer.id
+                )
+                
+                # Check if model_id attribute exists on Bin model
+                if hasattr(models.Bin, 'model_id'):
+                    new_bin.model_id = bin_model.id
+                    
+                db.add(new_bin)
+            except Exception as e:
+                logger.exception(f"Failed to generate bin {bin_name}: {str(e)}")
+                # Roll back the transaction and re-raise
+                db.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to generate bin {bin_name}: {str(e)}"
+                )
         
         # Commit all changes
+        logger.debug("Committing all changes to database")
         db.commit()
         
+        logger.info(f"Successfully generated {len(model_ids)} models for drawer {validated_request.name}")
         return GenerateDrawerModelsResponse(
-            message=f"Drawer {request.name} models generated successfully",
+            message=f"Drawer {validated_request.name} models generated successfully",
             modelIds=model_ids
         )
         
+    except HTTPException:
+        # Re-raise HTTP exceptions without modification
+        raise
     except Exception as e:
+        # Catch any other exceptions and log them
+        logger.exception(f"Unexpected error generating drawer models: {str(e)}")
         db.rollback()
         raise HTTPException(
-            status_code=500,
-            detail=f"Error generating drawer models: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error generating drawer models: {str(e)}"
         )
