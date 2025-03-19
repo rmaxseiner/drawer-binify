@@ -1,6 +1,43 @@
 // frontend/src/lib/api.ts
 import { fetchWithAuth } from './auth';
 
+// Get the API URL from the environment or use the default
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+// Ensure file URLs use the correct API URL
+export function ensureCorrectApiUrl(url: string): string {
+  if (!url) return url;
+  
+  // If the url already has the correct API_URL, return it
+  if (url.startsWith(API_URL)) {
+    return url;
+  }
+  
+  // If it's an absolute URL with a different host/port
+  if (url.match(/^https?:\/\//)) {
+    // Extract the path portion after the domain and port
+    const urlObj = new URL(url);
+    const pathPart = urlObj.pathname;
+    
+    // Remove /api prefix if present
+    const cleanPath = pathPart.replace(/^\/api/, '');
+    return `${API_URL}${cleanPath}`;
+  }
+  
+  // If it's a relative URL starting with /api, remove the /api prefix
+  if (url.startsWith('/api/')) {
+    const cleanPath = url.replace(/^\/api/, '');
+    return `${API_URL}${cleanPath}`;
+  }
+  
+  // If it's a relative URL (without /api), just append it to API_URL
+  if (url.startsWith('/')) {
+    return `${API_URL}${url}`;
+  }
+  
+  return `${API_URL}/${url}`;
+}
+
 export interface ModelDimensions {
   width: number;
   depth: number;
@@ -56,7 +93,13 @@ export async function generateBaseplate(dimensions: ModelDimensions) {
 
 export async function getModels() {
   const response = await fetchWithAuth('/models/');
-  return response.json();
+  const data = await response.json();
+  
+  // Ensure all file paths use the correct API URL
+  return data.map((model: any) => ({
+    ...model,
+    file_path: ensureCorrectApiUrl(model.file_path)
+  }));
 }
 
 export async function deleteModel(modelId: string) {
@@ -139,6 +182,7 @@ export interface GenerateDrawerModelsRequest {
   width: number;
   depth: number;
   height: number;
+  drawer_id: number;
   bins: PlacedBin[];
 }
 
@@ -150,6 +194,7 @@ export async function generateDrawerModels(data: GenerateDrawerModelsRequest) {
     // Ensure all bins have valid x and y coordinates
     const validatedData = {
       ...data,
+      drawer_id: data.drawer_id,
       bins: data.bins.map(bin => {
         // If x or y is null, undefined, or not a number, set to 0
         return {
@@ -315,5 +360,64 @@ export async function updateDrawerBins(drawerId: number, bins: PlacedBin[]) {
   } catch (error) {
     console.error("Error updating drawer bins:", error);
     throw error;
+  }
+}
+
+// User settings interfaces and functions
+export interface UserSettings {
+  id: number;
+  user_id: number;
+  theme: string;
+  default_drawer_height: number;
+  default_bin_height: number;
+  notification_preferences: Record<string, any>;
+}
+
+export async function getUserSettings(): Promise<UserSettings> {
+  try {
+    const response = await fetchWithAuth('/users/settings/');
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get user settings: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching user settings:', error);
+    throw error;
+  }
+}
+
+export async function updateUserSettings(settings: Partial<UserSettings>): Promise<UserSettings> {
+  try {
+    const response = await fetchWithAuth('/users/settings/', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(settings),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to update user settings: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error updating user settings:', error);
+    throw error;
+  }
+}
+
+export async function getDrawerBaseplates(drawerId: number) {
+  try {
+    const response = await fetchWithAuth(`/drawers/${drawerId}/baseplates`);
+    if (!response.ok) {
+      throw new Error(`Failed to get drawer baseplates: ${response.status}`);
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Error getting drawer baseplates:", error);
+    return [];
   }
 }

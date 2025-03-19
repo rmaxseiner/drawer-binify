@@ -2,6 +2,9 @@ from sqlalchemy.orm import Session
 from typing import List
 from .. import models, schemas
 from ..utils import StorageManager, storage
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ModelService:
@@ -10,17 +13,30 @@ class ModelService:
         self.storage = StorageManager()  # Initialize storage manager
 
     def retrieve_models(self) -> List[schemas.ModelResponse]:
+        logger.info("Retrieving all models")
         bins = self.db.query(models.Bin).all()
         baseplates = self.db.query(models.Baseplate).all()
 
         models_list = []
+        logger.info(f"Found {len(bins)} bins and {len(baseplates)} baseplates")
 
+        # Process bins
         for bin in bins:
-            stl_file = next((f for f in bin.files if f.file_type == "STL"), None)
+            # Check for STL files with both uppercase and lowercase
+            stl_file = next((f for f in bin.files if f.file_type.upper() == "STL"), None)
+            
+            if not stl_file:
+                logger.warning(f"Bin {bin.id} ({bin.name}) has no STL file")
+                # Log all available files to help diagnose the issue
+                if bin.files:
+                    logger.info(f"Available files for bin {bin.id}: {[f.file_type for f in bin.files]}")
+            else:
+                logger.debug(f"Bin {bin.id} has STL file: {stl_file.file_path}")
+                
             models_list.append(schemas.ModelResponse(
                 id=str(bin.id),
                 type="bin",
-                name=bin.name,
+                name=bin.name or f"Bin_{bin.id}",  # Provide a fallback name if None
                 date_created=bin.created_at,
                 width=bin.width,
                 depth=bin.depth,
@@ -28,12 +44,23 @@ class ModelService:
                 file_path=stl_file.file_path if stl_file else None
             ))
 
+        # Process baseplates
         for baseplate in baseplates:
-            stl_file = next((f for f in baseplate.files if f.file_type == "stl"), None)
+            # Check for STL files with both uppercase and lowercase
+            stl_file = next((f for f in baseplate.files if f.file_type.upper() == "STL"), None)
+            
+            if not stl_file:
+                logger.warning(f"Baseplate {baseplate.id} ({baseplate.name}) has no STL file")
+                # Log all available files to help diagnose the issue
+                if baseplate.files:
+                    logger.info(f"Available files for baseplate {baseplate.id}: {[f.file_type for f in baseplate.files]}")
+            else:
+                logger.debug(f"Baseplate {baseplate.id} has STL file: {stl_file.file_path}")
+                
             models_list.append(schemas.ModelResponse(
                 id=str(baseplate.id),
                 type="baseplate",
-                name=baseplate.name,
+                name=baseplate.name or f"Baseplate_{baseplate.id}",  # Provide a fallback name if None
                 date_created=baseplate.created_at,
                 width=baseplate.width,
                 depth=baseplate.depth,

@@ -6,6 +6,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import STLViewer from '@/components/viewers/STLViewer';
 import { useSearchParams } from 'next/navigation';
 import { MousePointer, Move, RotateCcw, ZoomIn } from 'lucide-react';
+import { ensureCorrectApiUrl } from '@/lib/api';
 
 const ViewerInstructions = () => (
   <div className="mb-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -55,11 +56,19 @@ const ViewerInstructions = () => (
 function STLViewContent() {
   const searchParams = useSearchParams();
   const modelUrl = searchParams.get('url');
-
-  console.log('STL View Page - URL param:', modelUrl);
+  
+  // Only log errors if there's no URL but we're not in the initial render
+  // This helps prevent console spam
+  if (!modelUrl && typeof window !== 'undefined' && document.referrer) {
+    console.error('No model URL provided in query parameters');
+    const params = Object.fromEntries(searchParams.entries());
+    console.error('Available search params:', params);
+  }
+  
+  // Try to get a valid URL even if it's empty or needs fixing
+  const correctedUrl = modelUrl ? ensureCorrectApiUrl(modelUrl) : null;
 
   if (!modelUrl) {
-    console.log('No model URL provided');
     return (
       <div className="p-8">
         <Card>
@@ -86,7 +95,7 @@ function STLViewContent() {
           <ViewerInstructions />
           <div className="border rounded-lg overflow-hidden">
             <div className="h-[600px]">
-              <STLViewer url={modelUrl} />
+              <STLViewer url={correctedUrl || modelUrl} />
             </div>
           </div>
         </CardContent>
@@ -97,6 +106,32 @@ function STLViewContent() {
 
 // Main page component wrapped in Suspense
 export default function StlViewPage() {
+  // Get the searchParams in the main component
+  const searchParams = useSearchParams();
+  const hasModelParam = searchParams.has('url');
+
+  // If there's no url parameter, show instructions instead of loading the model viewer
+  if (!hasModelParam) {
+    return (
+      <div className="p-8 max-w-7xl mx-auto">
+        <Card>
+          <CardHeader>
+            <CardTitle>STL Model Viewer</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Alert>
+              <AlertDescription>
+                Please provide a model URL using the <code>url</code> query parameter. 
+                For example: <code>/stl-view?url=/path/to/model.stl</code>
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Normal loading state with Suspense
   return (
     <Suspense fallback={
       <div className="p-8 max-w-7xl mx-auto">

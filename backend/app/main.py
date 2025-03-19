@@ -1,15 +1,15 @@
 from pathlib import Path
-import os
 import sys
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any
+from typing import List
 from app.services.model_service import ModelService
 from . import crud, models, schemas
 from .database import SessionLocal, engine
+from .models import Drawer
 from .security import (
     authenticate_user,
     create_access_token,
@@ -23,10 +23,9 @@ from app.services.bin_generation_service import BinGenerationService
 from app.services.baseplate_generator_service import BaseplateService
 from fastapi import Request
 from fastapi.staticfiles import StaticFiles
-from core.gridfinity_baseplate import GridfinityBaseplate, Unit
+from core.gridfinity_baseplate import GridfinityBaseplate
 from core.gridfinity_config import GridfinityConfig
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp, Receive, Scope, Send
 import logging
 import logging.handlers
 
@@ -126,7 +125,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # Update after creating the app
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:8000"],  # Specific origins
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:8000", "http://192.168.86.51:3001"],  # Specific origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -142,6 +141,7 @@ class BinGenerateRequest(BaseModel):
     width: float
     depth: float
     height: float
+    drawer_id: int
 
 class GeneratedFileResponse(BaseModel):
     id: int
@@ -190,6 +190,7 @@ class GenerateDrawerModelsRequest(BaseModel):
     width: float
     depth: float
     height: float
+    drawer_id: int
     bins: list[PlacedBinRequest]
     
 class GenerateDrawerModelsResponse(BaseModel):
@@ -448,7 +449,8 @@ async def generate_bin(
         name,
         width=request.width,
         depth=request.depth,
-        height=request.height
+        height=request.height,
+        drawer_id=0
     )
 
     return BinGenerateResponse(
@@ -472,6 +474,7 @@ async def generate_baseplate_endpoint(
     name = f"Baseplate_{request.width}_{request.depth}_{request.height}"
     baseplate, files = await baseplate_service.generate_baseplate(
         name,
+        drawer_id=request.drawer_id,
         width=request.width,
         depth=request.depth
     )
@@ -500,15 +503,26 @@ async def get_models_endpoint(
 ):
     model_service = ModelService(db)
     models = model_service.retrieve_models()
-
-    # Get base URL from request
+    
+    # Get base URL from request - use the actual host/port from the request
     base_url = str(request.base_url).rstrip('/')
-
+    logger.info(f"Base URL for file paths: {base_url}")
+    
     # Convert relative paths to full URLs
     for model in models:
         if model.file_path:
-            model.file_path = f"{base_url}/files/{model.file_path}"
-
+            # Clean up any path that might be problematic
+            file_path = model.file_path
+            # Remove leading slash if present
+            if file_path.startswith('/'):
+                file_path = file_path[1:]
+            # Create the full URL
+            model.file_path = f"{base_url}/files/{file_path}"
+            logger.debug(f"Model file path: {model.file_path}")
+        else:
+            logger.warning(f"Model {model.id} ({model.name}) has no file path")
+    
+    logger.info(f"Returning {len(models)} models")
     return models
 
 @app.delete("/models/{model_id}")
@@ -521,6 +535,256 @@ async def delete_model_endpoint(
     if not success:
         raise HTTPException(status_code=404, detail="Model not found")
     return {"message": "Model deleted successfully"}
+
+@app.get("/models/view/{model_id}/stl")
+async def get_model_stl_file(
+        model_id: int,
+        db: Session = Depends(get_db)
+):
+    """Get the STL file for a specific model."""
+    try:
+        logger.info(f"Checking for model with ID: {model_id}")
+
+        # Try to find the bin with this ID
+        bin_model = db.query(models.Bin).filter(models.Bin.id == model_id).first()
+
+        if bin_model and bin_model.model_id:
+            logger.info(f"Found bin: ID={bin_model.id}, Name={bin_model.name}")
+            # Get the model associated with this bin
+            model = db.query(models.Model).filter(models.Model.id == bin_model.model_id).first()
+            if model:
+                return await get_stl_file_from_model(model, f"bin_{model_id}.stl")
+
+        # If not a bin, try baseplate
+        baseplate = db.query(models.Baseplate).filter(models.Baseplate.id == model_id).first()
+
+        if baseplate and baseplate.model_id:
+            logger.info(f"Found baseplate: ID={baseplate.id}, Name={baseplate.name}")
+            # Get the model associated with this baseplate
+            model = db.query(models.Model).filter(models.Model.id == baseplate.model_id).first()
+            if model:
+                return await get_stl_file_from_model(model, f"baseplate_{model_id}.stl")
+
+        # Also try directly looking for a model with this ID
+        model = db.query(models.Model).filter(models.Model.id == model_id).first()
+        if model:
+            logger.info(f"Found model directly: ID={model.id}, Type={model.type}")
+            return await get_stl_file_from_model(model, f"model_{model_id}.stl")
+
+        # If we get here, we couldn't find a valid model
+        logger.warning(f"No valid model found for ID {model_id}")
+        raise HTTPException(status_code=404, detail=f"No valid model found for ID {model_id}")
+
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.exception(f"Error retrieving STL file for model {model_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving STL file: {str(e)}")
+
+
+async def get_stl_file_from_model(model, filename):
+    """Helper function to get STL file from a model"""
+    try:
+        # Find the STL file associated with this model
+        stl_file = next((f for f in model.files if f.file_type.upper() == "STL"), None)
+
+        if stl_file:
+            logger.info(f"Found STL file: ID={stl_file.id}, Path={stl_file.file_path}")
+            base_output_dir = Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output")
+            file_path = base_output_dir / stl_file.file_path
+
+            logger.info(f"Full file path: {file_path}")
+            logger.info(f"File exists: {file_path.exists()}")
+
+            if file_path.exists():
+                logger.info(f"Returning STL file response for model {model.id}")
+                return FileResponse(
+                    path=file_path,
+                    filename=filename,
+                    media_type="model/stl"
+                )
+            else:
+                logger.warning(f"STL file not found on disk at {file_path}")
+                raise HTTPException(status_code=404, detail=f"STL file not found on disk at {file_path}")
+        else:
+            logger.warning(f"No STL file found for model {model.id}")
+            raise HTTPException(status_code=404, detail=f"No STL file found for model {model.id}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error in get_stl_file_from_model: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving STL file: {str(e)}")
+
+
+async def _ids_to_check(model_id):
+    logger.info(f"STL file requested for model ID: {model_id}")
+    # List of IDs to check - try the requested ID, then ID-1, then ID+1
+    # This handles the case where model IDs and directory names don't match
+    ids_to_check = [model_id]
+    # If the model_id is even, check the odd number below it first
+    if model_id % 2 == 0:
+        ids_to_check.append(model_id - 1)
+        ids_to_check.append(model_id + 1)
+    else:
+        ids_to_check.append(model_id + 1)
+        ids_to_check.append(model_id - 1)
+    logger.info(f"Will check these IDs in order: {ids_to_check}")
+    return ids_to_check
+
+
+@app.get("/models/view/{model_id}/cad")
+async def get_model_cad_file(
+    model_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get the CAD file (FCStd) for a specific model."""
+    try:
+        ids_to_check = await _ids_to_check(model_id)
+        
+        # Try each ID in order
+        for check_id in ids_to_check:
+            logger.info(f"Checking for model with ID: {check_id}")
+            
+            # Attempt to find the bin first
+            bin_model = db.query(models.Bin).filter(models.Bin.id == check_id).first()
+            
+            if bin_model:
+                logger.info(f"Found bin model: ID={bin_model.id}, Name={bin_model.name}")
+                # Find the CAD file associated with this bin
+                cad_file = next((f for f in bin_model.files if f.file_type.upper() == "FCSTD"), None)
+                
+                if cad_file:
+                    logger.info(f"Found CAD file: ID={cad_file.id}, Path={cad_file.file_path}")
+                    file_path = Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output") / cad_file.file_path
+                    logger.info(f"Full file path: {file_path}")
+                    logger.info(f"File exists: {file_path.exists()}")
+                    
+                    if file_path.exists():
+                        logger.info(f"Returning CAD file response for bin {check_id} (originally requested ID: {model_id})")
+                        return FileResponse(
+                            path=file_path,
+                            filename=f"bin_{check_id}.FCStd",
+                            media_type="application/octet-stream"
+                        )
+                    else:
+                        logger.warning(f"CAD file not found on disk at {file_path}")
+                
+            # If not a bin, try baseplate
+            baseplate = db.query(models.Baseplate).filter(models.Baseplate.id == check_id).first()
+            
+            if baseplate:
+                logger.info(f"Found baseplate model: ID={baseplate.id}, Name={baseplate.name}")
+                # Find the CAD file associated with this baseplate
+                cad_file = next((f for f in baseplate.files if f.file_type.upper() == "FCSTD"), None)
+                
+                if cad_file:
+                    logger.info(f"Found CAD file: ID={cad_file.id}, Path={cad_file.file_path}")
+                    file_path = Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output") / cad_file.file_path
+                    logger.info(f"Full file path: {file_path}")
+                    logger.info(f"File exists: {file_path.exists()}")
+                    
+                    if file_path.exists():
+                        logger.info(f"Returning CAD file response for baseplate {check_id} (originally requested ID: {model_id})")
+                        return FileResponse(
+                            path=file_path,
+                            filename=f"baseplate_{check_id}.FCStd",
+                            media_type="application/octet-stream"
+                        )
+                    else:
+                        logger.warning(f"CAD file not found on disk at {file_path}")
+        
+        # If we get here, we tried all the IDs and couldn't find a valid model
+        logger.warning(f"No valid model found for ID {model_id} or adjacent IDs")
+        raise HTTPException(status_code=404, detail=f"No valid model found for ID {model_id} or adjacent IDs")
+    
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.exception(f"Error retrieving CAD file for model {model_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving CAD file: {str(e)}")
+
+@app.get("/models/download/{model_id}")
+async def download_model_file(
+    model_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get the downloadable CAD file for a specific model - redirect to CAD endpoint."""
+    # Redirect to the CAD endpoint for backward compatibility
+    return RedirectResponse(url=f"/models/view/{model_id}/cad")
+        
+@app.get("/debug/model/{model_id}")
+async def debug_model(
+    model_id: int,
+    db: Session = Depends(get_db)
+):
+    """Debug endpoint to check model details."""
+    logger.info(f"Debug request for model ID: {model_id}")
+    
+    # Create a response object
+    debug_info = {
+        "model_id": model_id,
+        "bin": None,
+        "baseplate": None,
+        "file_paths": []
+    }
+    
+    # Check if model exists as a bin
+    bin_model = db.query(models.Bin).filter(models.Bin.id == model_id).first()
+    if bin_model:
+        debug_info["bin"] = {
+            "id": bin_model.id,
+            "name": bin_model.name,
+            "width": bin_model.width,
+            "depth": bin_model.depth,
+            "height": bin_model.height,
+            "files": []
+        }
+        
+        # Get files for this bin
+        for file in bin_model.files:
+            file_path = Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output") / file.file_path
+            debug_info["bin"]["files"].append({
+                "id": file.id,
+                "file_type": file.file_type,
+                "file_path": file.file_path,
+                "full_path": str(file_path),
+                "exists": file_path.exists()
+            })
+            debug_info["file_paths"].append(str(file_path))
+    
+    # Check if model exists as a baseplate
+    baseplate = db.query(models.Baseplate).filter(models.Baseplate.id == model_id).first()
+    if baseplate:
+        debug_info["baseplate"] = {
+            "id": baseplate.id,
+            "name": baseplate.name,
+            "width": baseplate.width,
+            "depth": baseplate.depth,
+            "files": []
+        }
+        
+        # Get files for this baseplate
+        for file in baseplate.files:
+            file_path = Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output") / file.file_path
+            debug_info["baseplate"]["files"].append({
+                "id": file.id,
+                "file_type": file.file_type,
+                "file_path": file.file_path,
+                "full_path": str(file_path),
+                "exists": file_path.exists()
+            })
+            debug_info["file_paths"].append(str(file_path))
+    
+    # Check if any files were found
+    if not debug_info["bin"] and not debug_info["baseplate"]:
+        debug_info["status"] = "Model not found"
+    else:
+        debug_info["status"] = "Model found"
+    
+    return debug_info
 
 @app.post("/drawers/grid-layout/", response_model=DrawerGridResponse)
 async def calculate_drawer_grid(
@@ -572,152 +836,20 @@ async def generate_drawer_models(
     logger.info(f"Generate drawer models request received: {request}")
     
     # Manually validate the request
-    try:
-        # Check for required fields
-        if not isinstance(request, dict):
-            raise ValueError("Request must be a JSON object")
-        
-        required_fields = ["name", "width", "depth", "height", "bins"]
-        for field in required_fields:
-            if field not in request:
-                raise ValueError(f"Missing required field: {field}")
-        
-        # Validate bins array
-        if not isinstance(request["bins"], list):
-            raise ValueError("'bins' must be an array")
-        
-        for i, bin_item in enumerate(request["bins"]):
-            if not isinstance(bin_item, dict):
-                raise ValueError(f"Bin at index {i} must be an object")
-            
-            bin_fields = ["id", "width", "depth", "x", "y", "unitX", "unitY", "unitWidth", "unitDepth"]
-            for field in bin_fields:
-                if field not in bin_item:
-                    raise ValueError(f"Bin at index {i} is missing required field: {field}")
-        
-        # Convert to validated model
-        validated_request = GenerateDrawerModelsRequest(
-            name=request["name"],
-            width=float(request["width"]),
-            depth=float(request["depth"]),
-            height=float(request["height"]),
-            bins=[
-                PlacedBinRequest(
-                    id=bin_item["id"],
-                    width=float(bin_item["width"]),
-                    depth=float(bin_item["depth"]),
-                    x=float(bin_item["x"]),
-                    y=float(bin_item["y"]),
-                    unitX=int(bin_item["unitX"]),
-                    unitY=int(bin_item["unitY"]),
-                    unitWidth=int(bin_item["unitWidth"]),
-                    unitDepth=int(bin_item["unitDepth"])
-                ) for bin_item in request["bins"]
-            ]
-        )
-        
-        logger.info(f"Validated request for drawer: {validated_request.name} - "
-                    f"dimensions: {validated_request.width}x{validated_request.depth}x{validated_request.height} - "
-                    f"bins count: {len(validated_request.bins)}")
-    except Exception as e:
-        logger.error(f"Validation error in generate_drawer_models: {str(e)}")
-        logger.error(f"Request data: {request}")
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid request data: {str(e)}"
-        )
+    validated_request = await _validate_generate_request(request)
     
     try:
-        # Create drawer record
-        new_drawer = models.Drawer(
-            name=validated_request.name,
-            width=validated_request.width,
-            depth=validated_request.depth,
-            height=validated_request.height,
-            owner_id=current_user.id
-        )
-        db.add(new_drawer)
-        db.flush()  # Get the drawer ID
-        logger.debug(f"Created drawer record with ID: {new_drawer.id}")
-        
+        if validated_request.drawer_id:
+            drawer = await _retrieve_drawer(current_user, db, validated_request)
+        else:
+            drawer = await _create_drawer(current_user, db, validated_request)
+
         model_ids = []
-        
-        # First generate baseplate
-        config = GridfinityConfig()
-        baseplate_service = BaseplateService(
-            db=db,
-            base_output_dir=Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output")
-        )
-        
-        logger.debug(f"Generating baseplate for drawer {validated_request.name}")
-        baseplate_name = f"Baseplate_{validated_request.name}"
-        try:
-            baseplate, baseplate_files = await baseplate_service.generate_baseplate(
-                baseplate_name,
-                width=validated_request.width,
-                depth=validated_request.depth
-            )
-            
-            for file in baseplate_files:
-                model_ids.append(str(file.id))
-                logger.debug(f"Added baseplate file ID: {file.id}, path: {file.file_path}")
-        except Exception as e:
-            logger.exception(f"Failed to generate baseplate: {str(e)}")
-            # Roll back the transaction and re-raise
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to generate baseplate: {str(e)}"
-            )
-            
-        # Then generate bins
-        bin_service = BinGenerationService(
-            db=db,
-            base_output_dir=Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output")
-        )
-        
-        for i, bin_request in enumerate(validated_request.bins):
-            bin_name = f"Bin_{bin_request.id.split('-')[0]}"
-            logger.debug(f"Generating bin {i+1}/{len(validated_request.bins)}: {bin_name} - "
-                       f"dimensions: {bin_request.width}x{bin_request.depth}x{validated_request.height}")
-            
-            try:
-                bin_model, bin_files = await bin_service.generate_bin(
-                    bin_name,
-                    width=bin_request.width,
-                    depth=bin_request.depth,
-                    height=validated_request.height
-                )
-                
-                for file in bin_files:
-                    model_ids.append(str(file.id))
-                    logger.debug(f"Added bin file ID: {file.id}, path: {file.file_path}")
-                    
-                # Create bin record linked to the drawer
-                new_bin = models.Bin(
-                    name=bin_name,
-                    width=bin_request.width,
-                    depth=bin_request.depth,
-                    height=validated_request.height,
-                    x_position=bin_request.x,
-                    y_position=bin_request.y,
-                    drawer_id=new_drawer.id
-                )
-                
-                # Check if model_id attribute exists on Bin model
-                if hasattr(models.Bin, 'model_id'):
-                    new_bin.model_id = bin_model.id
-                    
-                db.add(new_bin)
-            except Exception as e:
-                logger.exception(f"Failed to generate bin {bin_name}: {str(e)}")
-                # Roll back the transaction and re-raise
-                db.rollback()
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to generate bin {bin_name}: {str(e)}"
-                )
-        
+
+        await _create_baseplate(db, model_ids, drawer, validated_request)
+
+        await _generate_bins(db, model_ids, drawer, validated_request)
+
         # Commit all changes
         logger.debug("Committing all changes to database")
         db.commit()
@@ -739,3 +871,326 @@ async def generate_drawer_models(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error generating drawer models: {str(e)}"
         )
+
+
+async def _retrieve_drawer(current_user: models.User, db: Session, validated_request: GenerateDrawerModelsRequest):
+    drawer = db.query(models.Drawer).filter(
+        models.Drawer.id == validated_request.drawer_id,
+        models.Drawer.owner_id == current_user.id
+    ).first()
+    if not drawer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Drawer not found or you don't have permission to modify it"
+        )
+    # Update drawer details if needed
+    drawer.name = validated_request.name
+    drawer.width = validated_request.width
+    drawer.depth = validated_request.depth
+    drawer.height = validated_request.height
+    return drawer
+
+
+async def _generate_bins(db: Session, model_ids, drawer: Drawer, validated_request: GenerateDrawerModelsRequest):
+    # Then generate bins
+    bin_service = BinGenerationService(
+        db=db,
+        base_output_dir=Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output")
+    )
+    # Group bins by their dimensions to optimize model reuse
+    dimension_groups = {}
+    for bin_request in validated_request.bins:
+        key = (bin_request.width, bin_request.depth, validated_request.height)
+        if key not in dimension_groups:
+            dimension_groups[key] = []
+        dimension_groups[key].append(bin_request)
+    
+    # Generate bins group by group to improve model reuse
+    for i, (dimensions, bins_in_group) in enumerate(dimension_groups.items()):
+        width, depth, height = dimensions
+
+        logger.debug(f"Processing bin group {i + 1}/{len(dimension_groups)}: "
+                     f"dimensions: {width}x{depth}x{height}, count: {len(bins_in_group)}")
+
+        try:
+            # Get or create the model - without creating a bin record
+            result = await bin_service.get_or_create_bin_model(
+                width=width,
+                depth=depth,
+                height=height,
+                drawer_id=drawer.id
+            )
+
+            model = result
+
+            # Process all bins in this dimension group
+            for j, bin_request in enumerate(bins_in_group):
+                bin_name = f"Bin_{bin_request.id.split('-')[0]}"
+                
+                if j == 0:
+                    logger.debug(f"Adding first bin in group: {bin_name}")
+                else:
+                    logger.debug(f"Adding bin {j + 1}/{len(bins_in_group)}: {bin_name} (reusing model)")
+
+                # Create bin record linked to the drawer and the model
+                new_bin = models.Bin(
+                    name=bin_name,
+                    width=width,
+                    depth=depth,
+                    height=height,
+                    x_position=bin_request.x,
+                    y_position=bin_request.y,
+                    drawer_id=drawer.id ,
+                    model_id=model.id  # Use the same model for all bins in this group
+                )
+                db.add(new_bin)
+                
+                # No need to create file records for individual bins anymore
+                # Files are associated with the model and can be accessed via bin.model.files
+
+            # Flush after each group to ensure changes are saved
+            db.flush()
+
+
+        except Exception as e:
+            logger.exception(f"Failed to generate bin group {dimensions}: {str(e)}")
+            # Roll back the transaction and re-raise
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to generate bin group {dimensions}: {str(e)}"
+            )
+
+
+async def _create_baseplate(db: Session, model_ids , drawer: Drawer, validated_request: GenerateDrawerModelsRequest):
+    # First generate baseplate
+    config = GridfinityConfig()
+    baseplate_service = BaseplateService(
+        db=db,
+        base_output_dir=Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output")
+    )
+    logger.debug(f"Generating baseplate for drawer {validated_request.name}")
+    baseplate_name = f"Baseplate_{validated_request.name}"
+    try:
+        baseplate, baseplate_files = await baseplate_service.generate_baseplate(
+            baseplate_name,
+            drawer.id,
+            width=validated_request.width,
+            depth=validated_request.depth
+        )
+
+        for file in baseplate_files:
+            model_ids.append(str(file.id))
+            logger.debug(f"Added baseplate file ID: {file.id}, path: {file.file_path}")
+    except Exception as e:
+        logger.exception(f"Failed to generate baseplate: {str(e)}")
+        # Roll back the transaction and re-raise
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate baseplate: {str(e)}"
+        )
+
+
+async def _create_drawer(current_user: models.User , db: Session, validated_request: GenerateDrawerModelsRequest):
+    # Create drawer record
+    new_drawer = models.Drawer(
+        name=validated_request.name,
+        width=validated_request.width,
+        depth=validated_request.depth,
+        height=validated_request.height,
+        owner_id=current_user.id
+    )
+    db.add(new_drawer)
+    db.flush()  # Get the drawer ID
+    logger.debug(f"Created drawer record with ID: {new_drawer.id}")
+    return new_drawer
+
+
+async def _validate_generate_request(request):
+    try:
+        # Check for required fields
+        if not isinstance(request, dict):
+            raise ValueError("Request must be a JSON object")
+
+        required_fields = ["name", "width", "depth", "height", "bins"]
+        for field in required_fields:
+            if field not in request:
+                raise ValueError(f"Missing required field: {field}")
+
+        # Validate bins array
+        if not isinstance(request["bins"], list):
+            raise ValueError("'bins' must be an array")
+
+        for i, bin_item in enumerate(request["bins"]):
+            if not isinstance(bin_item, dict):
+                raise ValueError(f"Bin at index {i} must be an object")
+
+            bin_fields = ["id", "width", "depth", "x", "y", "unitX", "unitY", "unitWidth", "unitDepth"]
+            for field in bin_fields:
+                if field not in bin_item:
+                    raise ValueError(f"Bin at index {i} is missing required field: {field}")
+
+        # Convert to validated model
+        validated_request = GenerateDrawerModelsRequest(
+            name=request["name"],
+            width=float(request["width"]),
+            depth=float(request["depth"]),
+            height=float(request["height"]),
+            drawer_id = int(request["drawer_id"]),
+            bins=[
+                PlacedBinRequest(
+                    id=bin_item["id"],
+                    width=float(bin_item["width"]),
+                    depth=float(bin_item["depth"]),
+                    x=float(bin_item["x"]),
+                    y=float(bin_item["y"]),
+                    unitX=int(bin_item["unitX"]),
+                    unitY=int(bin_item["unitY"]),
+                    unitWidth=int(bin_item["unitWidth"]),
+                    unitDepth=int(bin_item["unitDepth"])
+                ) for bin_item in request["bins"]
+            ]
+        )
+
+        logger.info(f"Validated request for drawer: {validated_request.name} - "
+                    f"dimensions: {validated_request.width}x{validated_request.depth}x{validated_request.height} - "
+                    f"bins count: {len(validated_request.bins)}")
+    except Exception as e:
+        logger.error(f"Validation error in generate_drawer_models: {str(e)}")
+        logger.error(f"Request data: {request}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid request data: {str(e)}"
+        )
+    return validated_request
+
+
+@app.get("/users/settings/", response_model=schemas.UserSettings)
+async def get_user_settings(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    local_kw: str = None,
+):
+    """Get current user settings"""
+    logger.info(f"Getting settings for user {current_user.username}")
+    settings = crud.get_user_settings(db, current_user.id)
+    if not settings:
+        # Create default settings if none exist
+        logger.info(f"Creating default settings for user {current_user.username}")
+        settings = crud.create_user_settings(db, current_user.id, schemas.UserSettingsCreate())
+    return settings
+
+@app.put("/users/settings/", response_model=schemas.UserSettings)
+async def update_user_settings(
+    settings_update: schemas.UserSettingsUpdate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update user settings"""
+    logger.info(f"Updating settings for user {current_user.username}: {settings_update}")
+    updated_settings = crud.update_user_settings(db, current_user.id, settings_update)
+    return updated_settings
+
+
+@app.get("/drawers/{drawer_id}/baseplates")
+def get_drawer_baseplates(
+        drawer_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(get_current_user)
+):
+    drawer = crud.get_drawer(db, drawer_id=drawer_id)
+    if drawer is None:
+        raise HTTPException(status_code=404, detail="Drawer not found")
+    if drawer.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this drawer")
+
+    # Get baseplates for this drawer
+    baseplates = db.query(models.Baseplate).filter(models.Baseplate.drawer_id == drawer_id).all()
+    return baseplates
+
+
+@app.get("/models/view/{model_id}/baseplate/stl")
+async def get_baseplate_stl_file(model_id: int, db: Session = Depends(get_db)):
+    """Get the STL file for a specific baseplate model."""
+    try:
+        # Find the baseplate
+        baseplate = db.query(models.Baseplate).filter(models.Baseplate.id == model_id).first()
+
+        if not baseplate:
+            raise HTTPException(status_code=404, detail="Baseplate not found")
+
+        if not baseplate.model_id:
+            raise HTTPException(status_code=404, detail="Baseplate has no associated model")
+
+        # Get the model associated with this baseplate
+        model = db.query(models.Model).filter(models.Model.id == baseplate.model_id).first()
+
+        if not model:
+            raise HTTPException(status_code=404, detail="Associated model not found")
+
+        # Find the STL file associated with this model
+        stl_file = next((f for f in model.files if f.file_type.upper() == "STL"), None)
+
+        if not stl_file:
+            raise HTTPException(status_code=404, detail="STL file not found for this baseplate model")
+
+        file_path = Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output") / stl_file.file_path
+
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="STL file not found on disk")
+
+        return FileResponse(
+            path=file_path,
+            filename=f"baseplate_{model_id}.stl",
+            media_type="model/stl"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error retrieving STL file for baseplate {model_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving STL file: {str(e)}")
+
+
+@app.get("/models/view/{model_id}/baseplate/cad")
+async def get_baseplate_cad_file(model_id: int, db: Session = Depends(get_db)):
+    """Get the CAD file for a specific baseplate model."""
+    try:
+        # Find the baseplate
+        baseplate = db.query(models.Baseplate).filter(models.Baseplate.id == model_id).first()
+
+        if not baseplate:
+            raise HTTPException(status_code=404, detail="Baseplate not found")
+
+        if not baseplate.model_id:
+            raise HTTPException(status_code=404, detail="Baseplate has no associated model")
+
+        # Get the model associated with this baseplate
+        model = db.query(models.Model).filter(models.Model.id == baseplate.model_id).first()
+
+        if not model:
+            raise HTTPException(status_code=404, detail="Associated model not found")
+
+        # Find the CAD file associated with this model
+        cad_file = next((f for f in model.files if f.file_type.upper() == "FCSTD"), None)
+
+        if not cad_file:
+            raise HTTPException(status_code=404, detail="CAD file not found for this baseplate model")
+
+        file_path = Path("/home/ron-maxseiner/PycharmProjects/drawerfinity/model-output") / cad_file.file_path
+
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="CAD file not found on disk")
+
+        return FileResponse(
+            path=file_path,
+            filename=f"baseplate_{model_id}.FCStd",
+            media_type="application/octet-stream"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error retrieving CAD file for baseplate {model_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving CAD file: {str(e)}")

@@ -37,6 +37,16 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    // Check if there's a stored activeMenu setting
+    if (typeof window !== 'undefined') {
+      const storedMenu = localStorage.getItem('activeMenu');
+      if (storedMenu) {
+        setActiveMenu(storedMenu);
+        // Clear the stored setting after using it
+        localStorage.removeItem('activeMenu');
+      }
+    }
+    
     // Check authentication first
     if (!isAuthenticated()) {
       console.log("Not authenticated, redirecting to login");
@@ -155,7 +165,13 @@ export default function Dashboard() {
                       onClick={() => router.push('/profile')}
                       className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                     >
-                      Profile Settings
+                      Profile
+                    </button>
+                    <button 
+                      onClick={() => setActiveMenu('settings')}
+                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      App Settings
                     </button>
                     <button 
                       onClick={() => router.push('/profile/password')}
@@ -312,13 +328,12 @@ export default function Dashboard() {
             )}
             
             {activeMenu === 'settings' && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Settings</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <h3 className="text-lg font-medium">Account Information</h3>
+              <div className="space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Account Information</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-sm font-medium text-gray-700">Username</label>
@@ -337,9 +352,36 @@ export default function Dashboard() {
                         <div className="mt-1 p-2 border rounded-md bg-gray-50">{user?.last_name || "-"}</div>
                       </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Application Settings</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-4">
+                      <div>
+                        <p className="text-sm text-gray-500 mb-4">
+                          Configure default dimensions and appearance settings.
+                        </p>
+                        <Button onClick={() => router.push('/profile/settings')} className="w-full">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+                          </svg>
+                          Application Settings
+                        </Button>
+                      </div>
+                    </div>
+                    <Button variant="outline" onClick={() => router.push('/profile/password')} className="w-full">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                      </svg>
+                      Change Password
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
             )}
           </div>
         </div>

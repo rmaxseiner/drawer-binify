@@ -4,6 +4,7 @@ import {useRouter} from "next/navigation";
 import {Alert, AlertDescription} from "@/components/ui/alert";
 import {Card, CardContent, CardHeader, CardTitle} from "@/components/ui/card";
 import {Button} from "@/components/ui/button";
+import { FileType, Cube3D } from "lucide-react";
 
 export function ModelsList() {
   const [models, setModels] = useState<Model[]>([]);
@@ -14,9 +15,20 @@ export function ModelsList() {
     try {
       setLoading(true);
       const data = await getModels();
+      
+      // Debug the models data
+      console.log('Models fetched:', data);
+      
+      // Check if there are any models with missing file paths
+      const modelsWithMissingPaths = data.filter(model => !model.file_path);
+      if (modelsWithMissingPaths.length > 0) {
+        console.warn('Models with missing file paths:', modelsWithMissingPaths);
+      }
+      
       setModels(data);
       setError(null);
-    } catch {
+    } catch (err) {
+      console.error('Error fetching models:', err);
       setError('Failed to load models');
     } finally {
       setLoading(false);
@@ -38,13 +50,26 @@ export function ModelsList() {
     }
   };
 
-  const handleView = (filePath: string) => {
-    console.log('View button clicked for file:', filePath);
-    const encodedUrl = encodeURIComponent(filePath);
-    const viewerUrl = `/stl-view?url=${encodedUrl}`;
-    console.log('Navigating to:', viewerUrl);
-    router.push(viewerUrl);
+  const handleView = (model: Model) => {
+    console.log('View button clicked for model:', model);
+    
+    // If we have a specific file path, use it
+    if (model.file_path) {
+      const encodedUrl = encodeURIComponent(model.file_path);
+      const viewerUrl = `/stl-view?url=${encodedUrl}`;
+      console.log('Navigating to:', viewerUrl);
+      router.push(viewerUrl);
+    } else {
+      // Otherwise use the direct API endpoint that will find the STL file for the model ID
+      // Use full absolute URL instead of relative path
+      const apiUrl = `http://localhost:8000/models/view/${model.id}/stl`;
+      console.log('Creating STL viewer URL for model:', model.id);
+      const viewerUrl = `/stl-view?url=${encodeURIComponent(apiUrl)}`;
+      console.log('Navigating to:', viewerUrl);
+      router.push(viewerUrl);
+    }
   };
+  
 
   if (loading) return <div className="text-center p-4">Loading...</div>;
   if (error) return <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>;
@@ -68,10 +93,15 @@ export function ModelsList() {
                 </div>
               </div>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => handleView(model.file_path)}>
-                  View
+                <Button variant="outline" size="sm" onClick={() => handleView(model)}>
+                  <Cube3D className="h-4 w-4 mr-1" />
+                  View STL
                 </Button>
-                <Button variant="destructive" onClick={() => handleDelete(model.id)}>
+                <Button variant="outline" size="sm" onClick={() => window.open(`/api/models/view/${model.id}/cad`, '_blank')}>
+                  <FileType className="h-4 w-4 mr-1" />
+                  Download CAD
+                </Button>
+                <Button variant="destructive" size="sm" onClick={() => handleDelete(model.id)}>
                   Delete
                 </Button>
               </div>

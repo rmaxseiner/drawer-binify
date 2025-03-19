@@ -2,7 +2,10 @@
 from sqlalchemy.orm import Session
 from . import models, schemas
 from app.utils.password import get_password_hash
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 def get_user(db: Session, user_id: int) -> Optional[models.User]:
     return db.query(models.User).filter(models.User.id == user_id).first()
@@ -43,12 +46,139 @@ def create_drawer(db: Session, drawer: schemas.DrawerCreate, user_id: int) -> mo
     db.refresh(db_drawer)
     return db_drawer
 
+
+def get_model_by_metadata(db: Session, model_type: str, metadata: Dict[str, Any]) -> Optional[models.Model]:
+    """
+    Find a model with matching type and metadata.
+
+    Returns:
+        - A matching Model if found
+        - None if no matching model exists
+
+    Raises:
+        - DatabaseError if a database error occurs
+        - ValueError if invalid parameters are provided
+    """
+    logger.info(f"Searching for {model_type} model with metadata: {metadata}")
+
+    # Input validation
+    if not model_type or not metadata:
+        raise ValueError("Model type and metadata are required")
+
+    # Query models with same type
+    models_query = db.query(models.Model).filter(models.Model.type == model_type)
+
+    try:
+        # Handle bin models with specific dimension matching
+        if model_type == "bin" and all(k in metadata for k in ["width", "depth", "height"]):
+            # Get all models of this type
+            all_models = models_query.all()
+
+            # Extract dimensions we're looking for
+            width = metadata["width"]
+            depth = metadata["depth"]
+            height = metadata["height"]
+
+            logger.info(f"Searching for bin with dimensions: width={width}, depth={depth}, height={height}")
+
+            # Find matching models
+            matching_models = []
+            for model in all_models:
+                model_metadata = model.model_metadata
+                if (model_metadata.get("width") == width and
+                        model_metadata.get("depth") == depth and
+                        model_metadata.get("height") == height):
+                    matching_models.append(model)
+                    logger.info(f"Found matching bin model: id={model.id}")
+
+            if matching_models:
+                return matching_models[0]
+
+        # Handle baseplate models with specific dimension matching
+        elif model_type == "baseplate" and all(k in metadata for k in ["width", "depth"]):
+            # Get all models of this type
+            all_models = models_query.all()
+
+            # Extract dimensions we're looking for
+            width = metadata["width"]
+            depth = metadata["depth"]
+
+            logger.info(f"Searching for baseplate with dimensions: width={width}, depth={depth}")
+
+            # Find matching models
+            matching_models = []
+            for model in all_models:
+                model_metadata = model.model_metadata
+                if (model_metadata.get("width") == width and
+                        model_metadata.get("depth") == depth):
+                    matching_models.append(model)
+                    logger.info(f"Found matching baseplate model: id={model.id}")
+
+            if matching_models:
+                return matching_models[0]
+
+        # For other model types, try direct metadata comparison
+        else:
+            for model in models_query.all():
+                if model.model_metadata == metadata:
+                    return model
+
+        # No matching model found
+        logger.info(f"No matching {model_type} model found")
+        return None
+
+    except Exception as e:
+        # This catch should only handle unexpected errors, not normal "not found" cases
+        logger.error(f"Error searching for {model_type} model: {e}", exc_info=True)
+        # Re-raise the exception rather than hiding it
+        raise
+
+    except Exception as e:
+        # Log the error but don't fail - just return None to create a new model
+        logger.error(f"Error in get_model_by_metadata: {str(e)}")
+        return None
+
+def create_model(db: Session, model: schemas.ModelCreate) -> models.Model:
+    """Create a new model"""
+    db_model = models.Model(**model.model_dump())
+    db.add(db_model)
+    db.commit()
+    db.refresh(db_model)
+    return db_model
+
+def get_or_create_model(db: Session, model_type: str, metadata: Dict[str, Any]) -> models.Model:
+    """Get an existing model or create a new one if it doesn't exist"""
+    # Check if model already exists
+    existing_model = get_model_by_metadata(db, model_type, metadata)
+    if existing_model:
+        return existing_model
+    
+    # If not, create a new model
+    model_create = schemas.ModelCreate(type=model_type, model_metadata=metadata)
+    return create_model(db, model_create)
+
 def create_bin(db: Session, bin: schemas.BinCreate) -> models.Bin:
-    db_bin = models.Bin(**bin.model_dump())
+    # Create the bin
+    bin_data = bin.model_dump()
+    
+    # If model_id is provided, use it; otherwise, we'll set it later
+    model_id = bin_data.pop('model_id', None)
+    
+    db_bin = models.Bin(**bin_data, model_id=model_id)
     db.add(db_bin)
     db.commit()
     db.refresh(db_bin)
     return db_bin
+
+def update_bin_model(db: Session, bin_id: int, model_id: int) -> Optional[models.Bin]:
+    """Update a bin's model reference"""
+    db_bin = db.query(models.Bin).filter(models.Bin.id == bin_id).first()
+    if db_bin:
+        db_bin.model_id = model_id
+        db.commit()
+        db.refresh(db_bin)
+        return db_bin
+    return None
 
 def get_drawer_bins(db: Session, drawer_id: int) -> List[models.Bin]:
     return db.query(models.Bin).filter(models.Bin.drawer_id == drawer_id).all()
@@ -156,3 +286,31 @@ def update_drawer_bins(
         db.refresh(bin_obj)
         
     return updated_bins
+
+def get_user_settings(db: Session, user_id: int) -> Optional[models.UserSettings]:
+    """Get user settings for a specific user"""
+    return db.query(models.UserSettings).filter(models.UserSettings.user_id == user_id).first()
+
+def create_user_settings(db: Session, user_id: int, settings: schemas.UserSettingsCreate) -> models.UserSettings:
+    """Create new user settings"""
+    db_settings = models.UserSettings(**settings.model_dump(), user_id=user_id)
+    db.add(db_settings)
+    db.commit()
+    db.refresh(db_settings)
+    return db_settings
+
+def update_user_settings(db: Session, user_id: int, settings: schemas.UserSettingsUpdate) -> Optional[models.UserSettings]:
+    """Update user settings"""
+    db_settings = get_user_settings(db, user_id)
+    
+    if not db_settings:
+        # If settings don't exist yet, create them
+        return create_user_settings(db, user_id, settings)
+    
+    # Update existing settings
+    for key, value in settings.model_dump(exclude_unset=True).items():
+        setattr(db_settings, key, value)
+    
+    db.commit()
+    db.refresh(db_settings)
+    return db_settings

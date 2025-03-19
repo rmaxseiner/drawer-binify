@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { ensureCorrectApiUrl } from '@/lib/api';
 
 interface STLViewerProps {
   url: string;
@@ -81,11 +82,18 @@ useEffect(() => {
 
     // Load STL
     const loader = new STLLoader();
-    console.log('Attempting to load STL from:', url);
+    const correctedUrl = ensureCorrectApiUrl(url);
+    
+    // Enhanced debugging for URL transformation
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Original URL:', url);
+      console.log('Corrected URL after transformation:', correctedUrl);
+      console.log('Attempting to load STL from corrected URL');
+    }
 
     try {
       loader.load(
-        url,
+        correctedUrl,
         (geometry) => {
           console.log('Successfully loaded geometry:', geometry);
 

@@ -5,7 +5,7 @@ import pytest
 from pathlib import Path
 import logging
 import shutil
-from unused.src.core.gridfinity_custom_bin import GridfinityCustomBin
+from core.gridfinity_custom_bin import GridfinityCustomBin
 inset = 0.25
 
 # Set up logging
@@ -22,7 +22,7 @@ def setup_logging():
     console_handler.setFormatter(formatter)
 
     # Create file handler and set level to DEBUG
-    log_dir = Path("../../tests/logs")
+    log_dir = Path("./logs")
     log_dir.mkdir(exist_ok=True)
     file_handler = logging.FileHandler(log_dir / "test_bin.log")
     file_handler.setLevel(logging.DEBUG)

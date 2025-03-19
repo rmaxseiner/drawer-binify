@@ -1,5 +1,5 @@
-from pydantic import BaseModel, EmailStr
-from typing import List, Optional
+from pydantic import BaseModel, EmailStr, Field
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 class UserBase(BaseModel):
@@ -35,6 +35,25 @@ class Drawer(DrawerBase):
     class Config:
         from_attributes = True
 
+class ModelMetadataBase(BaseModel):
+    width: float
+    depth: float
+    height: float
+
+class ModelBase(BaseModel):
+    type: str  # 'bin' or 'baseplate'
+    model_metadata: Dict[str, Any]  # Flexible metadata for different model types
+
+class ModelCreate(ModelBase):
+    pass
+
+class Model(ModelBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class BinBase(BaseModel):
     width: float
     depth: float
@@ -43,6 +62,7 @@ class BinBase(BaseModel):
 
 class BinCreate(BinBase):
     drawer_id: int
+    model_id: Optional[int] = None  # Optional because it might be set later
 
 class Bin(BinBase):
     id: int
@@ -51,6 +71,7 @@ class Bin(BinBase):
     x_position: Optional[float] = None
     y_position: Optional[float] = None
     name: Optional[str] = None
+    model_id: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -72,16 +93,24 @@ class PasswordChange(BaseModel):
     current_password: str
     new_password: str
 
+class BaseplateResponse(BaseModel):
+    id: int
+    name: str
+    width: float
+    depth: float
+    created_at: datetime
+    model_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
 class DrawerWithBins(Drawer):
     bins: List[Bin]
+    baseplates: List[BaseplateResponse] = []
 
 class UserWithDrawers(User):
     drawers: List[DrawerWithBins]
-
-class ModelBase(BaseModel):
-    width: float
-    depth: float
-    height: float
+    baseplates: List[BaseplateResponse] = []
 
 class GenerateResponse(BaseModel):
     success: bool
@@ -107,3 +136,22 @@ class BinUpdate(BaseModel):
 
 class BinUpdateList(BaseModel):
     bins: List[BinUpdate]
+    
+class UserSettingsBase(BaseModel):
+    theme: Optional[str] = "light"
+    default_drawer_height: Optional[float] = 40.0
+    default_bin_height: Optional[float] = 25.0
+    notification_preferences: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+class UserSettingsCreate(UserSettingsBase):
+    pass
+
+class UserSettingsUpdate(UserSettingsBase):
+    pass
+
+class UserSettings(UserSettingsBase):
+    id: int
+    user_id: int
+    
+    class Config:
+        from_attributes = True

@@ -1,6 +1,6 @@
 import { LoginCredentials, AuthResponse } from '@/types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8888';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export async function login(credentials: LoginCredentials): Promise<AuthResponse> {
   const formData = new URLSearchParams();
