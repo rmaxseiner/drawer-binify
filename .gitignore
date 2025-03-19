@@ -24,7 +24,6 @@ generated_files/
 *.swo
 
 # OS
-
 .DS_Store
 Thumbs.db
 
@@ -40,3 +39,10 @@ build/
 /frontend/node_modules/
 /frontend/.next/
 /node_modules/
+/CLAUDE.md
+
+# Problematic paths
+**/upload/
+**/file_reference.xml
+**/..\\/
+**/../..\\/
